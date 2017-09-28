@@ -39,42 +39,20 @@
 typedef NS_ENUM(NSInteger, VCSessionState)
 {
     VCSessionStateNone,
-    VCSessionStatePreviewStarted,
     VCSessionStateStarting,
     VCSessionStateStarted,
     VCSessionStateEnded,
-    VCSessionStateError
-
-};
-
-typedef NS_ENUM(NSInteger, VCCameraState)
-{
-    VCCameraStateFront,
-    VCCameraStateBack
-};
-
-typedef NS_ENUM(NSInteger, VCAspectMode)
-{
-    VCAspectModeFit,
-    VCAscpectModeFill
-};
-
-//With new filters should add an enum here
-typedef NS_ENUM(NSInteger, VCFilter) {
-    VCFilterNormal,
-    VCFilterGray,
-    VCFilterInvertColors,
-    VCFilterSepia,
-    VCFilterFisheye,
-    VCFilterGlow
+    VCSessionStateError,
+    VCSessionStateResumed,
+    VCSessionStateUnstableNetwork,
+    VCSessionStateDisconnected
 };
 
 @protocol VCSessionDelegate <NSObject>
 @required
-- (void) connectionStatusChanged: (VCSessionState) sessionState;
+- (void) connectionStatusChanged:(VCSessionState) sessionState capturedImage:(UIImage *)capturedImage;
+- (void) weakSignalDetected;
 @optional
-- (void) didAddCameraSource:(VCSimpleSession*)session;
-
 - (void) detectedThroughput: (NSInteger) throughputInBytesPerSecond; //Depreciated, should use method below
 - (void) detectedThroughput: (NSInteger) throughputInBytesPerSecond videoRate:(NSInteger) rate;
 @end
@@ -82,66 +60,40 @@ typedef NS_ENUM(NSInteger, VCFilter) {
 @interface VCSimpleSession : NSObject
 
 @property (nonatomic, readonly) VCSessionState rtmpSessionState;
-@property (nonatomic, strong, readonly) UIView* previewView;
+//@property (nonatomic, strong, readonly) UIView* previewView;
 
 /*! Setters / Getters for session properties */
 @property (nonatomic, assign) CGSize            videoSize;      // Change will not take place until the next RTMP Session
 @property (nonatomic, assign) int               bitrate;        // Change will not take place until the next RTMP Session
 @property (nonatomic, assign) int               fps;            // Change will not take place until the next RTMP Session
 @property (nonatomic, assign, readonly) BOOL    useInterfaceOrientation;
-@property (nonatomic, assign) VCCameraState cameraState;
-@property (nonatomic, assign) BOOL          orientationLocked;
-@property (nonatomic, assign) BOOL          torch;
-@property (nonatomic, assign) float         videoZoomFactor;
 @property (nonatomic, assign) int           audioChannelCount;
 @property (nonatomic, assign) float         audioSampleRate;
 @property (nonatomic, assign) float         micGain;        // [0..1]
-@property (nonatomic, assign) CGPoint       focusPointOfInterest;   // (0,0) is top-left, (1,1) is bottom-right
-@property (nonatomic, assign) CGPoint       exposurePointOfInterest;
-@property (nonatomic, assign) BOOL          continuousAutofocus;
-@property (nonatomic, assign) BOOL          continuousExposure;
 @property (nonatomic, assign) BOOL          useAdaptiveBitrate;     /* Default is off */
 @property (nonatomic, readonly) int         estimatedThroughput;    /* Bytes Per Second. */
-@property (nonatomic, assign) VCAspectMode  aspectMode;
-
-@property (nonatomic, assign) VCFilter      filter; /* Default is VCFilterNormal*/
 
 @property (nonatomic, assign) id<VCSessionDelegate> delegate;
 
-// -----------------------------------------------------------------------------
-- (instancetype) initWithVideoSize:(CGSize)videoSize
-                         frameRate:(int)fps
-                           bitrate:(int)bps;
++ (instancetype) sharedInstance;
 
-// -----------------------------------------------------------------------------
-- (instancetype) initWithVideoSize:(CGSize)videoSize
-                         frameRate:(int)fps
-                           bitrate:(int)bps
-           useInterfaceOrientation:(BOOL)useInterfaceOrientation;
+- (void) startRtmpSessionWithURL:(NSString*) rtmpUrl;
 
-// -----------------------------------------------------------------------------
-- (instancetype) initWithVideoSize:(CGSize)videoSize
-                         frameRate:(int)fps
-                           bitrate:(int)bps
-           useInterfaceOrientation:(BOOL)useInterfaceOrientation
-                       cameraState:(VCCameraState) cameraState;
+- (void) resumeRtmpSessionWithURL:(NSString*) rtmpUrl;
 
-// -----------------------------------------------------------------------------
-- (instancetype) initWithVideoSize:(CGSize)videoSize
-                         frameRate:(int)fps
-                           bitrate:(int)bps
-           useInterfaceOrientation:(BOOL)useInterfaceOrientation
-                       cameraState:(VCCameraState) cameraState
-                        aspectMode:(VCAspectMode) aspectMode;
+- (void) endRtmpSessionAndCaptureImage;
 
-// -----------------------------------------------------------------------------
+- (void) pushVideoBuffer:(CVPixelBufferRef)pixelBufferRef width:(int)width height:(int)height timeStamp:(long)timeStamp;
 
-- (void) startRtmpSessionWithURL:(NSString*) rtmpUrl
-                    andStreamKey:(NSString*) streamKey;
+- (void) pushAudioBuffer:(NSData *)frame timeStamp:(long)timeStamp;
 
-- (void) endRtmpSession;
+- (void) startPreview;
 
-- (void) getCameraPreviewLayer: (AVCaptureVideoPreviewLayer**) previewLayer;
+- (void) stopPreview;
+
+- (void) prepareForRotationPreview;
+
+- (void) completionRotationPreview;
 
 /*!
  *  Note that the rect you provide should be based on your video dimensions.  The origin
@@ -149,8 +101,5 @@ typedef NS_ENUM(NSInteger, VCFilter) {
  *  basically end up with the bottom-right quadrant of the image hanging out at the top-left corner of
  *  your video)
  */
-
-- (void) addPixelBufferSource: (UIImage*) image
-                     withRect: (CGRect) rect;
 
 @end

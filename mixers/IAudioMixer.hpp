@@ -25,9 +25,9 @@
 #ifndef videocore_IAudioMixer_hpp
 #define videocore_IAudioMixer_hpp
 
-#include <videocore/system/Buffer.hpp>
-#include <videocore/mixers/IMixer.hpp>
-#include <videocore/transforms/IMetadata.hpp>
+#include <VideoCore/system/Buffer.hpp>
+#include <VideoCore/mixers/IMixer.hpp>
+#include <VideoCore/transforms/IMetadata.hpp>
 
 namespace videocore {
 
@@ -47,6 +47,16 @@ namespace videocore {
 
     /*!
      *  Specifies the properties of the incoming audio buffer.
+     * DataType
+     * AudioMetadataFrequencyInHz
+     * AudioMetadataBitsPerChannel
+     * AudioMetadataChannelCount
+     * AudioMetadataFlags
+     * AudioMetadataBytesPerFrame
+     * AudioMetadataNumberFrames
+     * AudioMetadataUsesOSStruct
+     * AudioMetadataLoops
+     * AudioMetadataSource
      */
     typedef MetaData<'soun', int, int, int, int, int, int, bool, bool, std::weak_ptr<ISource> > AudioBufferMetadata;
 

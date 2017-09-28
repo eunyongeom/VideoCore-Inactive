@@ -36,6 +36,14 @@
 #define BUFFER_SIZE_TEXTURE  2
 #define BUFFER_STRIDE (sizeof(float) * 4)
 
+#ifndef DEBUG
+#define DEBUG
+#endif
+
+#define LogInfo printf
+#define LogError printf
+
+
 #ifdef DEBUG
 #define GL_ERRORS(line) { GLenum glerr; while((glerr = glGetError())) {\
 switch(glerr)\
@@ -78,7 +86,7 @@ break;\
 #define GL_FRAMEBUFFER_STATUS(line)
 #endif
 
-#include <videocore/system/util.h>
+#include <VideoCore/system/util.h>
 
 static float s_vbo [] =
 {
@@ -185,4 +193,168 @@ static inline GLuint build_program(const char * vertex, const char * fragment)
 }
 
 
+//Check GL Error
+static inline bool checkGlErrorLB(const char* op) {
+    bool flagGLError = false;
+    for (GLint error = glGetError(); error; error = glGetError()) {
+        flagGLError = true;
+        printf("GLERR after %s() glError (0x%x)\n", op, error);
+    }
+    return flagGLError;
+}
+/* Compile a shader from the provided source(s) */
+static inline GLint glueCompileShader(GLenum target, GLsizei count, const GLchar **sources, GLuint *shader)
+{
+    GLint status;
+    
+    *shader = glCreateShader(target);
+    glShaderSource(*shader, count, sources, NULL);
+    glCompileShader(*shader);
+    
+#if defined(DEBUG)
+    GLint logLength = 0;
+    glGetShaderiv(*shader, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength > 0)
+    {
+        GLchar *log = (GLchar *)malloc(logLength);
+        glGetShaderInfoLog(*shader, logLength, &logLength, log);
+        printf("Shader compile log:\n%s", log);
+        free(log);
+    }
+#endif
+    
+    glGetShaderiv(*shader, GL_COMPILE_STATUS, &status);
+    if (status == 0)
+    {
+        int i;
+        
+        printf("Failed to compile shader:\n");
+        for (i = 0; i < count; i++)
+            printf("%s", sources[i]);
+    }
+    
+    return status;
+}
+
+
+/* Link a program with all currently attached shaders */
+static inline GLint glueLinkProgram(GLuint program)
+{
+    GLint status;
+    
+    glLinkProgram(program);
+    
+#if defined(DEBUG)
+    GLint logLength = 0;
+    glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength > 0)
+    {
+        GLchar *log = (GLchar *)malloc(logLength);
+        glGetProgramInfoLog(program, logLength, &logLength, log);
+        printf("Program link log:\n%s", log);
+        free(log);
+    }
+#endif
+    
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    if (status == 0)
+        printf("Failed to link program %d", program);
+    
+    return status;
+}
+
+
+/* Validate a program (for i.e. inconsistent samplers) */
+static inline GLint glueValidateProgram(GLuint program)
+{
+    GLint status;
+    
+    glValidateProgram(program);
+    
+#if defined(DEBUG)
+    GLint logLength = 0;
+    glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength > 0)
+    {
+        GLchar *log = (GLchar *)malloc(logLength);
+        glGetProgramInfoLog(program, logLength, &logLength, log);
+        printf("Program validate log:\n%s", log);
+        free(log);
+    }
+#endif
+    
+    glGetProgramiv(program, GL_VALIDATE_STATUS, &status);
+    if (status == 0)
+        printf("Failed to validate program %d", program);
+    
+    return status;
+}
+
+
+/* Return named uniform location after linking */
+static inline GLint glueGetUniformLocation(GLuint program, const GLchar *uniformName)
+{
+    GLint loc;
+    
+    loc = glGetUniformLocation(program, uniformName);
+    
+    return loc;
+}
+
+
+/* Convenience wrapper that compiles, links, enumerates uniforms and attribs */
+static inline GLint glueCreateProgram(const GLchar *vertSource, const GLchar *fragSource,
+                                      GLsizei attribNameCt, const GLchar **attribNames,
+                                      const GLint *attribLocations,
+                                      GLsizei uniformNameCt, const GLchar **uniformNames,
+                                      GLint *uniformLocations,
+                                      GLuint *program)
+{
+    GLuint vertShader = 0, fragShader = 0, prog = 0, status = 1, i;
+    
+    // Create shader program
+    prog = glCreateProgram();
+    
+    // Create and compile vertex shader
+    status *= glueCompileShader(GL_VERTEX_SHADER, 1, &vertSource, &vertShader);
+    
+    // Create and compile fragment shader
+    status *= glueCompileShader(GL_FRAGMENT_SHADER, 1, &fragSource, &fragShader);
+    
+    // Attach vertex shader to program
+    glAttachShader(prog, vertShader);
+    
+    // Attach fragment shader to program
+    glAttachShader(prog, fragShader);
+    
+    // Bind attribute locations
+    // This needs to be done prior to linking
+    for (i = 0; i < attribNameCt; i++)
+    {
+        if(strlen(attribNames[i]))
+            glBindAttribLocation(prog, attribLocations[i], attribNames[i]);
+    }
+    
+    // Link program
+    status *= glueLinkProgram(prog);
+    
+    // Get locations of uniforms
+    if (status)
+    {
+        for(i = 0; i < uniformNameCt; i++)
+        {
+            if(strlen(uniformNames[i]))
+                uniformLocations[i] = glueGetUniformLocation(prog, uniformNames[i]);
+        }
+        *program = prog;
+    }
+    
+    // Release vertex and fragment shaders
+    if (vertShader)
+        glDeleteShader(vertShader);
+    if (fragShader)
+        glDeleteShader(fragShader);
+    
+    return status;
+}
 #endif

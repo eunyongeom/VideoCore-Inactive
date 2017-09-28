@@ -22,16 +22,16 @@
  THE SOFTWARE.
  
  */
-#include <videocore/rtmp/RTMPSession.h>
+#include <VideoCore/rtmp/RTMPSession.h>
 
 #ifdef __APPLE__
-#include <videocore/stream/Apple/StreamSession.h>
+#include <VideoCore/stream/Apple/StreamSession.h>
 #endif
 
 #ifndef DLOG_LEVEL_DEF
 #define DLOG_LEVEL_DEF DLOG_LEVEL_VERBOSE
 #endif
-#include <videocore/system/Logger.hpp>
+#include <VideoCore/system/Logger.hpp>
 
 #include <boost/tokenizer.hpp>
 #include <stdlib.h>
@@ -94,7 +94,7 @@ namespace videocore
     }
     RTMPSession::~RTMPSession()
     {
-        DLog("~RTMPSession");
+        DLog("VCSimpleSession::RTMPSession::~RTMPSession");
         if(m_state == kClientStateConnected) {
             sendDeleteStream();
         }
@@ -113,7 +113,7 @@ namespace videocore
         // reset the stream buffer.
         m_streamInBuffer->reset();
         int port = (m_uri.port > 0) ? m_uri.port : 1935;
-        DLog("Connecting:%s:%d, stream name:%s\n", m_uri.host.c_str(), port, m_playPath.c_str());
+        DLog("VCSimpleSession::RTMPSession::Connecting:%s:%d, stream name:%s\n", m_uri.host.c_str(), port, m_playPath.c_str());
         m_streamSession->connect(m_uri.host, port, [&](IStreamSession& session, StreamStatus_T status) {
             streamStatusChanged(status);
         });
@@ -267,17 +267,17 @@ namespace videocore
             size_t maxlen = m_streamInBuffer->availableSpace();
             if (maxlen > 0) {
                 ssize_t len = m_streamSession->read(m_streamInBuffer->writeBuffer(), maxlen);
-                DLogVerbose("Want read:%zd, read:%zd\n", maxlen, len);
+                //DLog("VCSimpleSession::RTMPSession::Want read:%zd, read:%zd\n", maxlen, len);
                 
                 if (len <= 0) {
-                    DLogError("Read from stream error:%ld\n", len);
+                    DLog("VCSimpleSession::RTMPSession::Read from stream error:%ld\n", len);
                     stop2 = true;
                     break;
                 }
                 m_streamInBuffer->didWrite(len);
             }
             else {
-                DLogDebug("Stream in buffer full\n");
+                DLog("VCSimpleSession::RTMPSession::Stream in buffer full\n");
             }
             
             while(m_streamInBuffer->availableBytes() > 0 && !stop1) {
@@ -291,7 +291,7 @@ namespace videocore
                             m_streamInBuffer->didRead(1);
                         }
                         else {
-                            DLogError("Want s0, but not:0x%X\n", static_cast<int>(s0));
+                            DLog("VCSimpleSession::RTMPSession::Want s0, but not:0x%X\n", static_cast<int>(s0));
                             // do remove data from buffer??
                             stop1 = true;
                         }
@@ -309,7 +309,7 @@ namespace videocore
                             handshake();
                         }
                         else {
-                            DLogDebug("Not enough s1 size\n");
+                            DLog("VCSimpleSession::RTMPSession::Not enough s1 size\n");
                             stop1 = true;
                         }
                     }
@@ -324,7 +324,7 @@ namespace videocore
                             sendConnectPacket();
                         }
                         else {
-                            DLogDebug("Not enough s2 size\n");
+                            DLog("VCSimpleSession::RTMPSession::Not enough s2 size\n");
                             stop1 = true;
                         }
                     }
@@ -531,7 +531,7 @@ namespace videocore
     void
     RTMPSession::sendHeaderPacket()
     {
-        DLog("send header packet\n");
+        DLog("VCSimpleSession::RTMPSession::send header packet\n");
         
         std::vector<uint8_t> enc;
         RTMPChunk_0 metadata = {{0}};
@@ -541,75 +541,82 @@ namespace videocore
         put_byte(enc, kAMFObject);
         //put_be32(enc, 5+5+2); // videoEnabled + audioEnabled + 2
         
-        //put_named_double(enc, "duration", 0.0);
+        put_named_double(enc, "duration", 0.0);
+        put_named_double(enc, "fileSize", 0.0);
         put_named_double(enc, "width", m_frameWidth);
         put_named_double(enc, "height", m_frameHeight);
-        put_named_double(enc, "displaywidth", m_frameWidth);
-        put_named_double(enc, "displayheight", m_frameHeight);
-        put_named_double(enc, "framewidth", m_frameWidth);
-        put_named_double(enc, "frameheight", m_frameHeight);
-        put_named_double(enc, "videodatarate", static_cast<double>(m_bitrate) / 1024.);
-        put_named_double(enc, "videoframerate", 1. / m_frameDuration);
+        //put_named_double(enc, "displaywidth", m_frameWidth);
+        //put_named_double(enc, "displayheight", m_frameHeight);
+        //put_named_double(enc, "framewidth", m_frameWidth);
+        //put_named_double(enc, "frameheight", m_frameHeight);
         
         put_named_string(enc, "videocodecid", "avc1");
-        {
-            put_name(enc, "trackinfo");
-            put_byte(enc, kAMFStrictArray);
-            put_be32(enc, 2);
-            
-            //
-            // Audio stream metadata
-            put_byte(enc, kAMFObject);
-            put_named_string(enc, "type", "audio");
-            {
-                std::stringstream ss;
-                ss << "{AACFrame: codec:AAC, channels: " << m_audioStereo+1 << ", frequency:" << m_audioSampleRate << ", samplesPerFrame:1024, objectType:LC}";
-                put_named_string(enc, "description", ss.str());
-            }
-            put_named_double(enc, "timescale", 1000.);
-            
-            put_name(enc, "sampledescription");
-            put_byte(enc, kAMFStrictArray);
-            put_be32(enc, 1);
-            put_byte(enc, kAMFObject);
-            put_named_string(enc, "sampletype", "mpeg4-generic");
-            put_byte(enc, 0);
-            put_byte(enc, 0);
-            put_byte(enc, kAMFObjectEnd);
-            
-            put_named_string(enc, "language", "eng");
-            
-            put_byte(enc, 0);
-            put_byte(enc, 0);
-            put_byte(enc, kAMFObjectEnd);
-            
-            //
-            // Video stream metadata
-            
-            put_byte(enc, kAMFObject);
-            put_named_string(enc, "type", "video");
-            put_named_double(enc, "timescale", 1000.);
-            put_named_string(enc, "language", "eng");
-            put_name(enc, "sampledescription");
-            put_byte(enc, kAMFStrictArray);
-            put_be32(enc, 1);
-            put_byte(enc, kAMFObject);
-            put_named_string(enc, "sampletype", "H264");
-            put_byte(enc, 0);
-            put_byte(enc, 0);
-            put_byte(enc, kAMFObjectEnd);
-            put_byte(enc, 0);
-            put_byte(enc, 0);
-            put_byte(enc, kAMFObjectEnd);
-        }
-        put_be16(enc, 0);
-        put_byte(enc, kAMFObjectEnd);
-        put_named_double(enc, "audiodatarate", 131152. / 1024.);
-        put_named_double(enc, "audiosamplerate", m_audioSampleRate);
-        put_named_double(enc, "audiosamplesize", 16);
-        put_named_double(enc, "audiochannels", m_audioStereo + 1);
-        put_named_string(enc, "audiocodecid", "mp4a");
+        put_named_double(enc, "videodatarate", 4000000 / 1000.f);
+        put_named_double(enc, "framerate", 15);
         
+        put_named_string(enc, "audiocodecid", "mp4a");
+        put_named_double(enc, "audiodatarate", 128000);
+        put_named_double(enc, "audiosamplerate", m_audioSampleRate);
+        put_named_double(enc, "audiosamplesize", 16.0);
+        //put_named_double(enc, "audiochannels", m_audioStereo + 1);
+        put_named_bool(enc, "stereo", m_audioStereo);
+        
+
+//        
+//        {
+//            put_name(enc, "trackinfo");
+//            put_byte(enc, kAMFStrictArray);
+//            put_be32(enc, 2);
+//            
+//            //
+//            // Audio stream metadata
+//            put_byte(enc, kAMFObject);
+//            put_named_string(enc, "type", "audio");
+//            {
+//                std::stringstream ss;
+//                ss << "{AACFrame: codec:AAC, channels: " << m_audioStereo+1 << ", frequency:" << m_audioSampleRate << ", samplesPerFrame:1024, objectType:LC}";
+//                put_named_string(enc, "description", ss.str());
+//            }
+//            put_named_double(enc, "timescale", 1000.);
+//            
+//            put_name(enc, "sampledescription");
+//            put_byte(enc, kAMFStrictArray);
+//            put_be32(enc, 1);
+//            put_byte(enc, kAMFObject);
+//            put_named_string(enc, "sampletype", "mpeg4-generic");
+//            put_byte(enc, 0);
+//            put_byte(enc, 0);
+//            put_byte(enc, kAMFObjectEnd);
+//            
+//            put_named_string(enc, "language", "eng");
+//            
+//            put_byte(enc, 0);
+//            put_byte(enc, 0);
+//            put_byte(enc, kAMFObjectEnd);
+//            
+//            //
+//            // Video stream metadata
+//            
+//            put_byte(enc, kAMFObject);
+//            put_named_string(enc, "type", "video");
+//            put_named_double(enc, "timescale", 1000.);
+//            put_named_string(enc, "language", "eng");
+//            put_name(enc, "sampledescription");
+//            put_byte(enc, kAMFStrictArray);
+//            put_be32(enc, 1);
+//            put_byte(enc, kAMFObject);
+//            put_named_string(enc, "sampletype", "H264");
+//            put_byte(enc, 0);
+//            put_byte(enc, 0);
+//            put_byte(enc, kAMFObjectEnd);
+//            put_byte(enc, 0);
+//            put_byte(enc, 0);
+//            put_byte(enc, kAMFObjectEnd);
+//        }
+//        put_be16(enc, 0);
+//        put_byte(enc, kAMFObjectEnd);
+
+        put_be16(enc, 0);
         put_be16(enc, 0);
         put_byte(enc, kAMFObjectEnd);
         size_t len = enc.size();
@@ -631,7 +638,7 @@ namespace videocore
     void
     RTMPSession::sendDeleteStream()
     {
-        DLog("send delete stream\n");
+        DLog("VCSimpleSession::RTMPSession::send delete stream\n");
         
         RTMPChunk_0 metadata = {{0}};
         metadata.msg_stream_id = kControlChannelStreamId;
@@ -652,7 +659,7 @@ namespace videocore
     RTMPSession::sendSetChunkSize(int32_t chunkSize)
     {
         m_jobQueue.enqueue([&, chunkSize] {
-            DLog("send set chunk size:%d\n", chunkSize);
+            DLog("VCSimpleSession::RTMPSession::send set chunk size:%d\n", chunkSize);
             int streamId = 0;
             
             std::vector<uint8_t> buff;
@@ -676,7 +683,7 @@ namespace videocore
     RTMPSession::sendPong()
     {
         m_jobQueue.enqueue([&] {
-            DLog("send pong\n")
+            DLog("VCSimpleSession::RTMPSession::send pong\n")
             
             int streamId = 0;
             
@@ -699,7 +706,7 @@ namespace videocore
     RTMPSession::sendSetBufferTime(int milliseconds)
     {
         m_jobQueue.enqueue([=]{
-            DLog("send ping\n")
+            DLog("VCSimpleSession::RTMPSession::send ping\n")
             
             int streamId = 0;
             
@@ -721,74 +728,74 @@ namespace videocore
     RTMPSession::handleMessage(uint8_t *p, uint8_t msgTypeId)
     {
         bool ret = true;
-        DLogDebug("Handle message:%d\n", (int)msgTypeId);
+        //DLog("VCSimpleSession::RTMPSession::Handle message:%d\n", (int)msgTypeId);
         switch(msgTypeId) {
             case RTMP_PT_BYTES_READ:
             {
-                //DLog("received bytes read: %d\n", get_be32(p));
+                //DLog("VCSimpleSession::RTMPSession::received bytes read: %d\n", get_be32(p));
             }
                 break;
                 
             case RTMP_PT_CHUNK_SIZE:
             {
                 unsigned long newChunkSize = get_be32(p);
-                DLog("Request to change incoming chunk size from %zu -> %zu\n", m_inChunkSize, newChunkSize);
+                DLog("VCSimpleSession::RTMPSession::Request to change incoming chunk size from %zu -> %zu\n", m_inChunkSize, newChunkSize);
                 m_inChunkSize = newChunkSize;
             }
                 break;
                 
             case RTMP_PT_PING:
             {
-                DLog("Received ping, sending pong.\n");
+                DLog("VCSimpleSession::RTMPSession::Received ping, sending pong.\n");
                 sendPong();
             }
                 break;
                 
             case RTMP_PT_SERVER_WINDOW:
             {
-                DLog("Received server window size: %d\n", get_be32(p));
+                DLog("VCSimpleSession::RTMPSession::Received server window size: %d\n", get_be32(p));
             }
                 break;
                 
             case RTMP_PT_PEER_BW:
             {
-                DLog("Received peer bandwidth limit: %d type: %d\n", get_be32(p), p[4]);
+                DLog("VCSimpleSession::RTMPSession::Received peer bandwidth limit: %d type: %d\n", get_be32(p), p[4]);
             }
                 break;
                 
             case RTMP_PT_INVOKE:
             {
-                DLog("Received invoke\n");
+                DLog("VCSimpleSession::RTMPSession::Received invoke\n");
                 handleInvoke(p);
             }
                 break;
             case RTMP_PT_VIDEO:
             {
-                DLog("Received video\n");
+                DLog("VCSimpleSession::RTMPSession::Received video\n");
             }
                 break;
                 
             case RTMP_PT_AUDIO:
             {
-                DLog("Received audio\n");
+                DLog("VCSimpleSession::RTMPSession::Received audio\n");
             }
                 break;
                 
             case RTMP_PT_METADATA:
             {
-                DLog("Received metadata\n");
+                DLog("VCSimpleSession::RTMPSession::Received metadata\n");
             }
                 break;
                 
             case RTMP_PT_NOTIFY:
             {
-                DLog("Received notify\n");
+                DLog("VCSimpleSession::RTMPSession::Received notify\n");
             }
                 break;
                 
             default:
             {
-                DLog("Received unknown packet type: 0x%02X\n", msgTypeId);
+                DLog("VCSimpleSession::RTMPSession::Received unknown packet type: 0x%02X\n", msgTypeId);
                 ret = false;
             }
                 break;
@@ -833,9 +840,9 @@ namespace videocore
     RTMPSession::parseCurrentData()
     {
         //        Logger::dumpBuffer("dataReceived", m_streamInBuffer->readBuffer(), m_streamInBuffer->availableBytes());
-        DLogVerbose("Steam in buffer size:%zd\n", m_streamInBuffer->availableBytes());
+        //DLog("VCSimpleSession::RTMPSession::Steam in buffer size:%zd\n", m_streamInBuffer->availableBytes());
         if (m_streamInBuffer->availableBytes() <= 0) {
-            DLogDebug("No data in buffer\n");
+            DLog("VCSimpleSession::RTMPSession::No data in buffer\n");
             return false;
         }
         
@@ -843,7 +850,7 @@ namespace videocore
         // at least one byte in current buffer.
         memcpy(&first_byte, m_streamInBuffer->readBuffer(), 1);
         int header_type = (first_byte & 0xC0) >> 6;
-        DLogVerbose("First byte:0x%X, header type:%d\n", (int)first_byte, header_type);
+        //DLog("VCSimpleSession::RTMPSession::First byte:0x%X, header type:%d\n", (int)first_byte, header_type);
         switch(header_type) {
             case RTMP_HEADER_TYPE_FULL:
             {
@@ -853,13 +860,13 @@ namespace videocore
                     memcpy(&chunk, m_streamInBuffer->readBuffer()+1, sizeof(RTMPChunk_0));
                     chunk.msg_length.data = get_be24((uint8_t*)&chunk.msg_length);
                     if (chunk.msg_length.data < 0) {
-                        DLogDebug("ERROR: Invalid header length\n");
+                        DLog("VCSimpleSession::RTMPSession::ERROR: Invalid header length\n");
                         Logger::dumpBuffer("RTMPChunk_0 ERROR", m_streamInBuffer->readBuffer(), m_streamInBuffer->availableBytes());
                         // FIXME: Clear the stream in buffer ?
                         return false;
                     }
                     if(chunk.msg_length.data > 65535) {
-                        DLogDebug("Length too large ???:%d\n", chunk.msg_length.data);
+                        DLog("VCSimpleSession::RTMPSession::Length too large ???:%d\n", chunk.msg_length.data);
                     }
                     std::vector<uint8_t> msg(chunk.msg_length.data);
                     int  full_msgsize = tryReadOneMessage(&msg[0], chunk.msg_length.data, 1+sizeof(RTMPChunk_0));
@@ -871,12 +878,12 @@ namespace videocore
                         return true;
                     }
                     else {
-                        DLogDebug("Not enough one message in buffer\n");
+                        DLog("VCSimpleSession::RTMPSession::Not enough one message in buffer\n");
                         return false;
                     }
                 }
                 else {
-                    DLogDebug("Not enough a header\n");
+                    DLog("VCSimpleSession::RTMPSession::Not enough a header\n");
                     // DEBUG only
                     Logger::dumpBuffer("RTMPChunk_0", m_streamInBuffer->readBuffer(), m_streamInBuffer->availableBytes());
                     return false;
@@ -892,14 +899,14 @@ namespace videocore
                     chunk.msg_length.data = get_be24((uint8_t*)&chunk.msg_length);
                     
                     if (chunk.msg_length.data < 0) {
-                        DLogDebug("ERROR: Invalid header length");
+                        DLog("VCSimpleSession::RTMPSession::ERROR: Invalid header length");
                         Logger::dumpBuffer("RTMPChunk_1 ERROR", m_streamInBuffer->readBuffer(), m_streamInBuffer->availableBytes());
                         // FIXME: Clear the stream in buffer ?
                         return false;
                     }
                     
                     if(chunk.msg_length.data > 65535) {
-                        DLogDebug("Length too large ???:%d\n", chunk.msg_length.data);
+                        DLog("VCSimpleSession::RTMPSession::Length too large ???:%d\n", chunk.msg_length.data);
                     }
                     
                     std::vector<uint8_t> msg(chunk.msg_length.data);
@@ -914,12 +921,12 @@ namespace videocore
                         return true;
                     }
                     else {
-                        DLogDebug("Not enough one message in buffer\n");
+                        DLog("VCSimpleSession::RTMPSession::Not enough one message in buffer\n");
                         return false;
                     }
                 }
                 else {
-                    DLogDebug("Not enough a header\n");
+                    DLog("VCSimpleSession::RTMPSession::Not enough a header\n");
                     // DEBUG only
                     Logger::dumpBuffer("RTMPChunk_1", m_streamInBuffer->readBuffer(), m_streamInBuffer->availableBytes());
                     return false;
@@ -930,7 +937,7 @@ namespace videocore
             case RTMP_HEADER_TYPE_TIMESTAMP:
             {
                 // the message length is the same as previous message.
-                DLogDebug("Previous chunk length:%d, msgid:%d, streamid:%d\n", m_previousChunk.msg_length.data, m_previousChunk.msg_type_id, m_previousChunk.msg_stream_id);
+                //DLog("VCSimpleSession::RTMPSession::Previous chunk length:%d, msgid:%d, streamid:%d\n", m_previousChunk.msg_length.data, m_previousChunk.msg_type_id, m_previousChunk.msg_stream_id);
                 RTMPChunk_2 chunk;
                 if (m_streamInBuffer->availableBytes() >= 1+sizeof(RTMPChunk_2)) {
                     memcpy(&chunk, m_streamInBuffer->readBuffer()+1, sizeof(RTMPChunk_2));
@@ -942,12 +949,12 @@ namespace videocore
                         return true;
                     }
                     else {
-                        DLogDebug("Not enough one message in buffer\n");
+                        DLog("VCSimpleSession::RTMPSession::Not enough one message in buffer\n");
                         return false;
                     }
                 }
                 else {
-                    DLogDebug("Not enough a header\n");
+                    DLog("VCSimpleSession::RTMPSession::Not enough a header\n");
                     // DEBUG only
                     Logger::dumpBuffer("RTMPChunk_2", m_streamInBuffer->readBuffer(), m_streamInBuffer->availableBytes());
                     return false;
@@ -963,7 +970,7 @@ namespace videocore
                 break;
                 
             default:
-                DLogError("Invalid header type:%d\n", header_type);
+                DLog("VCSimpleSession::RTMPSession::Invalid header type:%d\n", header_type);
                 // FIXME: Maybe we shoult close the connection and reopen it
                 m_networkQueue.enqueue([=]{
                     connectServer();
@@ -979,11 +986,11 @@ namespace videocore
         int buflen=0;
         std::string command = get_string(p, buflen);
         
-        DLog("Received invoke %s\n", command.c_str());
+        DLog("VCSimpleSession::RTMPSession::Received invoke %s\n", command.c_str());
         
         if (command == "_result") {
             int32_t pktId = int32_t(get_double(p+11));
-            // 找回result对应的command
+            // 找回result对应的command  // Retrieve the result corresponding to the command
             std::string trackedCommand;
             auto it = m_trackedCommands.find(pktId) ;
             
@@ -991,7 +998,7 @@ namespace videocore
                 trackedCommand = it->second;
             }
             
-            DLog("Find command: %s for ID:%d\n", trackedCommand.c_str(), (int)pktId);
+            DLog("VCSimpleSession::RTMPSession::Find command: %s for ID:%d\n", trackedCommand.c_str(), (int)pktId);
             if (trackedCommand == "connect") {
                 
                 sendReleaseStream();
@@ -1001,18 +1008,18 @@ namespace videocore
                 
             } else if (trackedCommand == "createStream") {
                 if (p[10] || p[19] != 0x05 || p[20]) {
-                    DLog("RTMP: Unexpected reply on connect()\n");
+                    DLog("VCSimpleSession::RTMPSession::RTMPSession::RTMP: Unexpected reply on connect()\n");
                 } else {
                     m_streamId = get_double(p+21);
                 }
                 sendPublish();
                 setClientState(kClientStateReady);
             }
-            // FIXME: 需要清理一下m_trackedCommands的记录吗？
+            // FIXME: 需要清理一下m_trackedCommands的记录吗？// Need to clean up the m_trackedCommands record?
             
         } else if (command == "onStatus") {
             std::string code = parseStatusCode(p + 3 + command.length());
-            DLog("code : %s\n", code.c_str());
+            DLog("VCSimpleSession::RTMPSession::RTMPSession::code : %s\n", code.c_str());
             if (code == "NetStream.Publish.Start") {
                 
                 sendHeaderPacket();
@@ -1092,7 +1099,7 @@ namespace videocore
     int32_t RTMPSession::trackCommand(const std::string& cmd) {
         ++m_numberOfInvokes;
         m_trackedCommands[m_numberOfInvokes] = cmd;
-        DLog("Tracking command(%d, %s)\n", m_numberOfInvokes, cmd.c_str());
+        DLog("VCSimpleSession::RTMPSession::RTMPSession::Tracking command(%d, %s)\n", m_numberOfInvokes, cmd.c_str());
         return m_numberOfInvokes;
     }
 }

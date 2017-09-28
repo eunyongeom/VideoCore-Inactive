@@ -28,9 +28,9 @@
 #define __videocore__GLESVideoMixer__
 
 #include <iostream>
-#include <videocore/mixers/IVideoMixer.hpp>
-#include <videocore/system/JobQueue.hpp>
-#include <videocore/system/pixelBuffer/Apple/PixelBuffer.h>
+#include <VideoCore/mixers/IVideoMixer.hpp>
+#include <VideoCore/system/JobQueue.hpp>
+#include <VideoCore/system/pixelBuffer/Apple/PixelBuffer.h>
 
 #include <map>
 #include <thread>
@@ -43,32 +43,6 @@
 
 namespace videocore { namespace iOS {
  
-    struct SourceBuffer
-    {
-        SourceBuffer() : m_currentTexture(nullptr), m_pixelBuffers() { };
-        ~SourceBuffer() { };
-        void setBuffer(Apple::PixelBufferRef ref, CVOpenGLESTextureCacheRef textureCache, JobQueue& jobQueue, void* glContext);
-        
-        CVOpenGLESTextureRef currentTexture() const { return m_currentTexture; };
-        Apple::PixelBufferRef currentBuffer() const { return m_currentBuffer; };
-        
-        bool blends() const { return m_blends; };
-        void setBlends(bool blends) { m_blends = blends; };
-    private:
-        typedef struct __Buffer_ {
-            __Buffer_(Apple::PixelBufferRef buf) : texture(nullptr), buffer(buf) {};
-            ~__Buffer_() { if(texture) { CFRelease(texture); } };
-                
-            Apple::PixelBufferRef buffer;
-            CVOpenGLESTextureRef texture;
-            std::chrono::steady_clock::time_point time;
-        } Buffer_;
-        
-        std::map< CVPixelBufferRef, Buffer_ >   m_pixelBuffers;
-        Apple::PixelBufferRef                   m_currentBuffer;
-        CVOpenGLESTextureRef                    m_currentTexture;
-        bool                                    m_blends;
-    };
     /*
      *  Takes CVPixelBufferRef inputs and outputs a single CVPixelBufferRef that has been composited from the various sources.
      *  Sources must output VideoBufferMetadata with their buffers. This compositor uses homogeneous coordinates.
@@ -114,6 +88,10 @@ namespace videocore { namespace iOS {
                         size_t size,
                         IMetadata& metadata);
         
+        void pushBuffer(CVPixelBufferRef pixelBufferRef, long timeStamp);
+        
+        void savePixelBuffer(CVPixelBufferRef pixelBufferRef);
+        
         /*! ITransform::setOutput */
         void setOutput(std::shared_ptr<IOutput> output);
         
@@ -128,6 +106,8 @@ namespace videocore { namespace iOS {
     public:
         
         void mixPaused(bool paused);
+        CVPixelBufferRef getPixelBuffer();
+        
     private:
         /*!
          * Hash a smart pointer to a source.
@@ -155,6 +135,7 @@ namespace videocore { namespace iOS {
          */
         void setupGLES(std::function<void(void*)> excludeContext);
         
+        void initPixelBuffer(int width, int height, CVPixelBufferRef* pixelBufferRef);
         
         
     private:
@@ -174,13 +155,15 @@ namespace videocore { namespace iOS {
         
         CVPixelBufferPoolRef m_pixelBufferPool;
         CVPixelBufferRef m_pixelBuffer[2];
+        long m_pixelBufferCount[2];
+        long m_currentPixelBufferCount;
+        long m_previousPixelBufferCount;
         CVOpenGLESTextureCacheRef m_textureCache;
         CVOpenGLESTextureRef      m_texture[2];
         
         void*       m_callbackSession;
         void*       m_glesCtx;
         unsigned    m_vbo, m_vao, m_fbo[2], m_prog, m_uMat;
-        
         
         int m_frameW;
         int m_frameH;
@@ -190,7 +173,6 @@ namespace videocore { namespace iOS {
         
         std::map< std::size_t, glm::mat4 >               m_sourceMats;
         std::unordered_map<std::size_t, IVideoFilter*>   m_sourceFilters;
-        std::unordered_map<std::size_t, SourceBuffer>    m_sourceBuffers;
         
         std::chrono::steady_clock::time_point m_syncPoint;
         std::chrono::steady_clock::time_point m_epoch;
@@ -203,6 +185,12 @@ namespace videocore { namespace iOS {
         
         bool              m_shouldSync;
         bool              m_catchingUp;
+        
+        int               m_current_fb;
+        
+        dispatch_queue_t  m_videoMixerQueue;
+        
+        long              m_relativeTimestamp;
     };
     
 }

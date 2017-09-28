@@ -22,9 +22,9 @@
  THE SOFTWARE.
  
  */
-#include <videocore/transforms/RTMP/H264Packetizer.h>
-#include <videocore/rtmp/RTMPTypes.h>
-#include <videocore/rtmp/RTMPSession.h>
+#include <VideoCore/transforms/RTMP/H264Packetizer.h>
+#include <VideoCore/rtmp/RTMPTypes.h>
+#include <VideoCore/rtmp/RTMPSession.h>
 
 namespace videocore { namespace rtmp {
     
@@ -55,6 +55,8 @@ namespace videocore { namespace rtmp {
         
         flags = FLV_CODECID_H264;
         auto output = m_output.lock();
+        
+        //DLog("*#*#*# nal_type=%d pts=%d dts=%d cts=%d",nal_type, pts, dts, pts-dts);
 
         switch(nal_type) {
             case 7:

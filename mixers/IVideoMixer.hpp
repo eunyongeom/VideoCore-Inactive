@@ -25,9 +25,11 @@
 #ifndef videocore_IVideoMixer_hpp
 #define videocore_IVideoMixer_hpp
 
-#include <videocore/mixers/IMixer.hpp>
-#include <videocore/filters/IVideoFilter.hpp>
-#include <videocore/filters/FilterFactory.h>
+#include <VideoCore/mixers/IMixer.hpp>
+#include <VideoCore/filters/IVideoFilter.hpp>
+#include <VideoCore/filters/FilterFactory.h>
+
+#include <CoreVideo/CoreVideo.h>
 
 #include <glm/glm.hpp>
 
@@ -52,9 +54,13 @@ namespace videocore
     {
     public:
         virtual ~IVideoMixer() {};
-        virtual void setSourceFilter(std::weak_ptr<ISource> source, IVideoFilter* filter)=0;
+        virtual void setSourceFilter(std::weak_ptr<ISource> source, IVideoFilter* filter) = 0;
+        virtual void mixPaused(bool paused) = 0;
         virtual FilterFactory& filterFactory() = 0;
         virtual void sync() = 0;
+        virtual void pushBuffer(CVPixelBufferRef pixelBufferRef, long timeStamp) = 0;
+        virtual CVPixelBufferRef getPixelBuffer() = 0;
+        virtual void savePixelBuffer(CVPixelBufferRef pixelBufferRef) = 0;
     };
 }
 

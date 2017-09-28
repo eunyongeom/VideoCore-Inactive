@@ -24,149 +24,167 @@
  */
 #include "MicSource.h"
 #include <dlfcn.h>
-#include <videocore/mixers/IAudioMixer.hpp>
-#import <AVFoundation/AVFoundation.h>
+#include <VideoCore/mixers/IAudioMixer.hpp>
 #import <UIKit/UIKit.h>
+#import <VideoCore/system/DDLog.h>
 
 #define SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(v)  ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] != NSOrderedAscending)
+#define kNoMoreDataErr -2222
+#define MAX_AUDIO_FRAMES 2048
+
+struct PassthroughUserData {
+    UInt32 mChannels;
+    UInt32 mDataSize;
+    const void* mData;
+    AudioStreamPacketDescription mPacket;
+};
 
 
-@implementation InterruptionHandler
-
-- (void) handleInterruption:(NSNotification*)notification
-{
-    NSDictionary* userInfo = notification.userInfo;
-    
-    if([userInfo[AVAudioSessionInterruptionTypeKey] intValue] == AVAudioSessionInterruptionTypeBegan) {
-        _source->interruptionBegan();
-    } else {
-        _source->interruptionEnded();
-    }
-}
-
-@end
-        
-        
 static std::weak_ptr<videocore::iOS::MicSource> s_micSource;
-
-static OSStatus handleInputBuffer(void *inRefCon,
-                                  AudioUnitRenderActionFlags *ioActionFlags,
-                                  const AudioTimeStamp *inTimeStamp,
-                                  UInt32 inBusNumber,
-                                  UInt32 inNumberFrames,
-                                  AudioBufferList *ioData)
-{
-    videocore::iOS::MicSource* mc =static_cast<videocore::iOS::MicSource*>(inRefCon);
-
-    AudioBuffer buffer;
-    buffer.mData = NULL;
-    buffer.mDataByteSize = 0;
-    buffer.mNumberChannels = 2;
-
-    AudioBufferList buffers;
-    buffers.mNumberBuffers = 1;
-    buffers.mBuffers[0] = buffer;
-
-    OSStatus status = AudioUnitRender(mc->audioUnit(),
-                                      ioActionFlags,
-                                      inTimeStamp,
-                                      inBusNumber,
-                                      inNumberFrames,
-                                      &buffers);
-
-    if(!status) {
-        mc->inputCallback((uint8_t*)buffers.mBuffers[0].mData, buffers.mBuffers[0].mDataByteSize, inNumberFrames);
-    }
-    return status;
-}
-
 
 namespace videocore { namespace iOS {
 
     MicSource::MicSource(double sampleRate, int channelCount, std::function<void(AudioUnit&)> excludeAudioUnit)
-    : m_sampleRate(sampleRate), m_channelCount(channelCount), m_audioUnit(nullptr), m_component(nullptr)
+    : m_sampleRate(sampleRate), m_channelCount(channelCount)
+    {
+        setupAudioConverter();
+        m_buffer = (uint8_t *)malloc(MAX_AUDIO_FRAMES * sizeof(short int));
+        m_decodedData = [NSMutableData new];
+    }
+    
+    MicSource::~MicSource() {
+        free(m_buffer);
+        m_decodedData = nil;
+        AudioConverterDispose(m_audioConverter);
+    }
+    
+    void
+    MicSource::setupAudioConverter()
+    {
+        AudioStreamBasicDescription outFormat;
+        memset(&outFormat, 0, sizeof(outFormat));
+        outFormat.mSampleRate       = 44100;
+        outFormat.mFormatID         = kAudioFormatLinearPCM;
+        outFormat.mFormatFlags      = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked;
+        outFormat.mBytesPerPacket   = 4;
+        outFormat.mFramesPerPacket  = 1;
+        outFormat.mBytesPerFrame    = 4;
+        outFormat.mChannelsPerFrame = 2;
+        outFormat.mBitsPerChannel   = 16;
+        outFormat.mReserved         = 0;
+        
+        
+        AudioStreamBasicDescription inFormat;
+        memset(&inFormat, 0, sizeof(inFormat));
+        inFormat.mSampleRate        = 48000;
+        inFormat.mFormatID          = kAudioFormatMPEG4AAC;
+        inFormat.mFormatFlags       = 0; //kMPEG4Object_AAC_Main
+        inFormat.mBytesPerPacket    = 0;
+        inFormat.mFramesPerPacket   = 1024;
+        inFormat.mBytesPerFrame     = 0;
+        inFormat.mChannelsPerFrame  = 2;
+        inFormat.mBitsPerChannel    = 0;
+        inFormat.mReserved          = 0;
+        
+        OSStatus status =  AudioConverterNew(&inFormat, &outFormat, &m_audioConverter);
+        if (status != 0) {
+            printf("setup converter error, status: %i\n", (int)status);
+        }
+    }
+    
+    OSStatus
+    MicSource::inInputDataProc(AudioConverterRef aAudioConverter,
+                               UInt32* aNumDataPackets /* in/out */,
+                               AudioBufferList* aData /* in/out */,
+                               AudioStreamPacketDescription** aPacketDesc,
+                               void* aUserData)
     {
         
-
-        AVAudioSession *session = [AVAudioSession sharedInstance];
-
-        __block MicSource* bThis = this;
-
-        PermissionBlock permission = ^(BOOL granted) {
-            if(granted) {
-
-                [session setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionMixWithOthers error:nil];
-                //[session setMode:AVAudioSessionModeVideoChat error:nil];
-                [session setActive:YES error:nil];
-                
-                AudioComponentDescription acd;
-                acd.componentType = kAudioUnitType_Output;
-                acd.componentSubType = kAudioUnitSubType_RemoteIO;
-                acd.componentManufacturer = kAudioUnitManufacturer_Apple;
-                acd.componentFlags = 0;
-                acd.componentFlagsMask = 0;
-                
-                bThis->m_component = AudioComponentFindNext(NULL, &acd);
-                
-                AudioComponentInstanceNew(bThis->m_component, &bThis->m_audioUnit);
-                if(!bThis->m_audioUnit) {
-                    DLog("AudioComponentInstanceNew failed");
-                    return ;
-                }
-                
-                if(excludeAudioUnit) {
-                    excludeAudioUnit(bThis->m_audioUnit);
-                }
-                UInt32 flagOne = 1;
-                
-                AudioUnitSetProperty(bThis->m_audioUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &flagOne, sizeof(flagOne));
-                
-                AudioStreamBasicDescription desc = {0};
-                desc.mSampleRate = bThis->m_sampleRate;
-                desc.mFormatID = kAudioFormatLinearPCM;
-                desc.mFormatFlags = (kAudioFormatFlagIsSignedInteger | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked);
-                desc.mChannelsPerFrame = bThis->m_channelCount;
-                desc.mFramesPerPacket = 1;
-                desc.mBitsPerChannel = 16;
-                desc.mBytesPerFrame = desc.mBitsPerChannel / 8 * desc.mChannelsPerFrame;
-                desc.mBytesPerPacket = desc.mBytesPerFrame * desc.mFramesPerPacket;
-                
-                AURenderCallbackStruct cb;
-                cb.inputProcRefCon = this;
-                cb.inputProc = handleInputBuffer;
-                AudioUnitSetProperty(bThis->m_audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &desc, sizeof(desc));
-                AudioUnitSetProperty(bThis->m_audioUnit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 1, &cb, sizeof(cb));
-                
-                m_interruptionHandler = [[InterruptionHandler alloc] init];
-                m_interruptionHandler->_source = this;
-                
-                [[NSNotificationCenter defaultCenter] addObserver:m_interruptionHandler selector:@selector(handleInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
-                
-                AudioUnitInitialize(bThis->m_audioUnit);
-                OSStatus ret = AudioOutputUnitStart(bThis->m_audioUnit);
-                if(ret != noErr) {
-                    DLog("Failed to start microphone!");
-                }
-            }
-        };
-        
-        if(SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
-            [session requestRecordPermission:permission];
-        } else {
-            permission(true);
+        PassthroughUserData* userData = (PassthroughUserData*)aUserData;
+        if (!userData->mDataSize) {
+            *aNumDataPackets = 0;
+            return kNoMoreDataErr;
         }
-
+        
+        if (aPacketDesc) {
+            userData->mPacket.mStartOffset = 0;
+            userData->mPacket.mVariableFramesInPacket = 0;
+            userData->mPacket.mDataByteSize = userData->mDataSize;
+            *aPacketDesc = &userData->mPacket;
+        }
+        
+        aData->mBuffers[0].mNumberChannels = userData->mChannels;
+        aData->mBuffers[0].mDataByteSize = userData->mDataSize;
+        aData->mBuffers[0].mData = const_cast<void*>(userData->mData);
+        
+        // No more data to provide following this run.
+        userData->mDataSize = 0;
+        
+        return noErr;
     }
-    MicSource::~MicSource() {
-        if(m_audioUnit) {
-            [[NSNotificationCenter defaultCenter] removeObserver:m_interruptionHandler];
-            [m_interruptionHandler release];
+    
+    void
+    MicSource::pushAAC(NSData * frame, long timeStamp)
+    {
+        uint8_t *data = (uint8_t *)[frame bytes];
+        
+        auto output = m_output.lock();
+        if(output) {
+            AudioBufferMetadata md ( timeStamp );
+            output->pushBuffer(data, frame.length, md);
+        }
+    }
+    
+    void
+    MicSource::decodeAudioFrame(NSData * frame)
+    {
+        PassthroughUserData userData = { 1, (UInt32)frame.length, [frame bytes]};
+        
+        const uint32_t maxDecodedSamples = MAX_AUDIO_FRAMES * 1;
+        
+        [m_decodedData setLength:0];
+        
+        do{
+            AudioBufferList decBuffer;
+            decBuffer.mNumberBuffers = 1;
+            decBuffer.mBuffers[0].mNumberChannels = 1;
+            decBuffer.mBuffers[0].mDataByteSize = maxDecodedSamples * sizeof(short int);
+            decBuffer.mBuffers[0].mData = m_buffer;
             
-            AudioOutputUnitStop(m_audioUnit);
-            AudioComponentInstanceDispose(m_audioUnit);
-        }
+            UInt32 numFrames = MAX_AUDIO_FRAMES;
+            
+            AudioStreamPacketDescription outPacketDescription;
+            memset(&outPacketDescription, 0, sizeof(AudioStreamPacketDescription));
+            outPacketDescription.mDataByteSize = MAX_AUDIO_FRAMES;
+            outPacketDescription.mStartOffset = 0;
+            outPacketDescription.mVariableFramesInPacket = 0;
+            
+            OSStatus rv = AudioConverterFillComplexBuffer(m_audioConverter,
+                                                          MicSource::inInputDataProc,
+                                                          &userData,
+                                                          &numFrames /* in/out */,
+                                                          &decBuffer,
+                                                          &outPacketDescription);
+            
+            if (rv && rv != kNoMoreDataErr) {
+                DDLogInfo(@"Error decoding audio stream: %d", rv);
+                break;
+            }
+            
+            if (numFrames) {
+                [m_decodedData appendBytes:decBuffer.mBuffers[0].mData length:decBuffer.mBuffers[0].mDataByteSize];
+            }
+            
+            if (rv == kNoMoreDataErr) {
+                break;
+            }
+            
+        }while (true);
         
+        uint8_t *pData = (uint8_t *)[m_decodedData bytes];
+        inputCallback(pData, m_decodedData.length, (int)(m_decodedData.length / 4));
     }
+    
     void
     MicSource::inputCallback(uint8_t *data, size_t data_size, int inNumberFrames)
     {
@@ -187,21 +205,14 @@ namespace videocore { namespace iOS {
             output->pushBuffer(data, data_size, md);
         }
     }
-    void
-    MicSource::interruptionBegan() {
-        DLog("interruptionBegan");
-        AudioOutputUnitStop(m_audioUnit);
-    }
-    void
-    MicSource::interruptionEnded() {
-        DLog("interruptionEnded");
-        AudioOutputUnitStart(m_audioUnit);
-    }
+
     void
     MicSource::setOutput(std::shared_ptr<IOutput> output) {
         m_output = output;
-        auto mixer = std::dynamic_pointer_cast<IAudioMixer>(output);
-        mixer->registerSource(shared_from_this());
+        if(m_sampleRate != 48000) {
+            auto mixer = std::dynamic_pointer_cast<IAudioMixer>(output);
+            mixer->registerSource(shared_from_this());
+        }
     }
 }
 }

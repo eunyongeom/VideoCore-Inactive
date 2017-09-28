@@ -22,10 +22,10 @@
  THE SOFTWARE.
 
  */
-#include <videocore/transforms/RTMP/AACPacketizer.h>
+#include <VideoCore/transforms/RTMP/AACPacketizer.h>
 #include <vector>
-#include <videocore/system/Buffer.hpp>
-#include <videocore/rtmp/RTMPSession.h>
+#include <VideoCore/system/Buffer.hpp>
+#include <VideoCore/rtmp/RTMPSession.h>
 
 namespace videocore { namespace rtmp {
 
@@ -33,6 +33,15 @@ namespace videocore { namespace rtmp {
     : m_audioTs(0), m_sentAudioConfig(false), m_sampleRate(sampleRate), m_channelCount(channelCount), m_ctsOffset(ctsOffset)
     {
         memset(m_asc, 0, sizeof(m_asc));
+        m_relativeTimestamp = 0;
+    }
+    
+    void
+    AACPacketizer::makeAsc(uint8_t sampleRateIndex, uint8_t channelCount)
+    {
+        // http://wiki.multimedia.cx/index.php?title=MPEG-4_Audio#Audio_Specific_Config
+        m_asc[0] = 0x10 | ((sampleRateIndex>>1) & 0x3);
+        m_asc[1] = ((sampleRateIndex & 0x1)<<7) | ((channelCount & 0xF) << 3);
     }
 
     void
@@ -52,21 +61,34 @@ namespace videocore { namespace rtmp {
         const int flags_size = 2;
 
 
-        int ts = metadata.timestampDelta + m_ctsOffset ;
-//        DLog("AAC: %06d", ts);
+        if(m_relativeTimestamp == 0)
+            m_relativeTimestamp = metadata.timestampDelta;
+        
+        int ts = metadata.timestampDelta + m_ctsOffset - m_relativeTimestamp;
+        
+        if(m_sampleRate != 48000) {
+            ts = metadata.timestampDelta + m_ctsOffset ;
+        }
+        
+        //DLog("*#*# AAC: %06d", ts);
         
         auto output = m_output.lock();
 
         RTMPMetadata_t outMeta(ts);
 
-        if(inSize == 2 && !m_asc[0] && !m_asc[1]) {
-            m_asc[0] = inBuffer[0];
-            m_asc[1] = inBuffer[1];
+        if(m_sampleRate != 48000) {
+            if(inSize == 2 && !m_asc[0] && !m_asc[1]) {
+                m_asc[0] = inBuffer[0];
+                m_asc[1] = inBuffer[1];
+            }
         }
 
         if(output) {
 
-            flags = FLV_CODECID_AAC | flvSampleRate | FLV_SAMPLESSIZE_16BIT | flvStereoOrMono;
+            flags = FLV_CODECID_AAC | FLV_SAMPLESSIZE_16BIT | flvStereoOrMono;
+            if(m_sampleRate != 48000) {
+                flags = FLV_CODECID_AAC | flvSampleRate | FLV_SAMPLESSIZE_16BIT | flvStereoOrMono;
+            }
 
             outBuffer.reserve(inSize + flags_size);
 
@@ -74,6 +96,9 @@ namespace videocore { namespace rtmp {
             put_byte(outBuffer, m_sentAudioConfig);
 
             if(!m_sentAudioConfig) {
+                if(m_sampleRate == 48000) {
+                    this->makeAsc(3, 2); // 48000 HZ, 2 channel
+                }
                 m_sentAudioConfig = true;
                 put_buff(outBuffer, (uint8_t*)m_asc, sizeof(m_asc));
 

@@ -27,8 +27,8 @@
 #define __videocore__AACPacketizer__
 
 #include <iostream>
-#include <videocore/transforms/ITransform.hpp>
-#include <Vector>
+#include <VideoCore/transforms/ITransform.hpp>
+#include <vector>
 
 namespace videocore { namespace rtmp {
 
@@ -42,7 +42,8 @@ namespace videocore { namespace rtmp {
         void setEpoch(const std::chrono::steady_clock::time_point epoch) { m_epoch = epoch; };
 
     private:
-
+        
+        void makeAsc(uint8_t sampleRateIndex, uint8_t channelCount);
 
         std::chrono::steady_clock::time_point m_epoch;
         std::weak_ptr<IOutput> m_output;
@@ -54,6 +55,7 @@ namespace videocore { namespace rtmp {
         float m_sampleRate;
         int m_ctsOffset;
         int m_channelCount;
+        long m_relativeTimestamp;
     };
 
 }

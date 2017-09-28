@@ -27,6 +27,10 @@
 
 @interface VCPreviewView : UIView
 
-- (void) drawFrame: (CVPixelBufferRef) pixelBuffer;
+- (void) drawFrame:(CVPixelBufferRef)pixelBuffer isEmptyPixelBuffer:(BOOL)isEmptyPixelBuffer;
+- (void) startPreview;
+- (void) stopPreview;
+- (void) prepareForRotationPreview;
+- (void) completionRotationPreview;
 
 @end

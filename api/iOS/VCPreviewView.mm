@@ -24,12 +24,14 @@
  */
 #import "VCPreviewView.h"
 
-#include <videocore/sources/iOS/GLESUtil.h>
+#include <VideoCore/sources/iOS/GLESUtil.h>
 
 #import <OpenGLES/EAGL.h>
 #import <OpenGLES/EAGLDrawable.h>
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
+
+#import <VideoCore/system/DDLog.h>
 
 #import <glm/glm.hpp>
 #import <glm/gtc/matrix_transform.hpp>
@@ -38,26 +40,77 @@
 
 @interface VCPreviewView()
 {
-    GLuint _renderBuffer;
-    GLuint _shaderProgram;
-    GLuint _vbo;
-    GLuint _fbo;
-    GLuint _vao;
-    GLuint _matrixPos;
+    EAGLContext *_oglContext;
+    GLuint _program;
+    GLint _frame;
     
-    int _currentBuffer;
-    
-    std::atomic<bool> _paused;
+    CAEAGLLayer* _eaglLayer;
+    CVOpenGLESTextureCacheRef _textureCache;
+    GLint _width;
+    GLint _height;
+    GLuint _frameBufferHandle;
+    GLuint _colorBufferHandle;
+    GLuint _texture[2];
+
+    CVOpenGLESTextureRef _exTextureRef[2];
     
     CVPixelBufferRef _currentRef[2];
-    CVOpenGLESTextureCacheRef _cache;
-    CVOpenGLESTextureRef _texture[2];
+    int _currentBuffer;
     
+    CVPixelBufferRef _emptyPixelBuffer;
+    std::atomic<bool> _paused;
+    std::atomic<bool> _internalPaused;
+    
+    float drawX, drawY, drawHeight, drawWidth;
+    int frameHeight, frameWidth;
 }
 @property (nonatomic, strong) EAGLContext* context;
-@property (nonatomic) CAEAGLLayer* glLayer;
 @end
 @implementation VCPreviewView
+
+#if !defined(_STRINGIFY)
+#define __STRINGIFY( _x )   # _x
+#define _STRINGIFY( _x )   __STRINGIFY( _x )
+#endif
+
+static const char * kPassThruVertex = _STRINGIFY(
+                                                 
+                                                 attribute vec4 position;
+                                                 attribute mediump vec4 texturecoordinate;
+                                                 varying mediump vec2 coordinate;
+                                                 uniform float zoom; // zoom
+                                                 
+                                                 void main()
+{
+    gl_Position = position;
+    coordinate = texturecoordinate.xy;
+    //zoom
+    //coordinate = (coordinate - .5) * zoom + .5;
+}
+                                                 
+                                                 );
+
+static const char * kPassThruFragment = _STRINGIFY(
+                                                   precision highp float;
+                                                   varying highp vec2 coordinate;
+                                                   uniform sampler2D videoframe;
+                                                   //attribute vec4 tex;
+                                                   void main()
+{
+    vec4 tex = texture2D ( videoframe, coordinate );
+    gl_FragColor = vec4(tex.r, tex.g, tex.b, 0);
+    //gl_FragColor = texture2D(videoframe, coordinate);
+    //gl_FragColor = vec4(1, 0, 0, 1.0);
+}
+                                                   
+                                                   );
+
+enum {
+    ATTRIB_VERTEX,
+    ATTRIB_TEXTUREPOSITON,
+    NUM_ATTRIBUTES
+};
+
 
 #pragma mark - UIView overrides
 
@@ -70,102 +123,157 @@
 {
     self = [super initWithFrame:frame];
     if (self) {
+        self.contentScaleFactor = [UIScreen mainScreen].scale;
+        _eaglLayer = (CAEAGLLayer*) self.layer;
+        
+        _eaglLayer.opaque = YES;
+        
+        _eaglLayer.drawableProperties = @{kEAGLDrawablePropertyRetainedBacking: @NO,kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8};
+        _eaglLayer.drawableProperties = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool:YES],kEAGLDrawablePropertyRetainedBacking,kEAGLColorFormatRGBA8, kEAGLDrawablePropertyColorFormat,nil];
         
         
+        EAGLRenderingAPI api = kEAGLRenderingAPIOpenGLES3;
+        self.context = [[EAGLContext alloc] initWithAPI:api];
+        if (!self.context) {
+            DDLogInfo(@"Failed to initialize OpenGLES 2.0 context");
+            exit(1);
+        }
+        
+        if (![EAGLContext setCurrentContext:self.context]) {
+            DDLogInfo(@"Failed to set current OpenGL context");
+            exit(1);
+        }
+        
+        _oglContext = self.context;
+        GLuint _framebuffer;
+        GLuint _colorRenderBuffer;
+        glGenFramebuffers(1, &_framebuffer);
+        glGenRenderbuffers(1, &_colorRenderBuffer);
+        
+        glBindFramebuffer(GL_FRAMEBUFFER, _framebuffer);
+        glBindRenderbuffer(GL_RENDERBUFFER, _colorRenderBuffer);
+        
+        
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _colorRenderBuffer);
+        
+        self.autoresizingMask = 0xFF;
     }
     return self;
 }
 - (instancetype) init {
     if ((self = [super init])) {
-        [self initInternal];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(notification:) name:UIApplicationDidEnterBackgroundNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(notification:) name:UIApplicationWillEnterForegroundNotification object:nil];
+        
+        int width = 1440;
+        int height = 720;
+        
+        NSDictionary* pixelBufferOptions = @{ (NSString*) kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+                                              (NSString*) kCVPixelBufferWidthKey : @(width),
+                                              (NSString*) kCVPixelBufferHeightKey : @(height),
+                                              (NSString*) kCVPixelBufferOpenGLESCompatibilityKey : @YES,
+                                              (NSString*) kCVPixelBufferIOSurfacePropertiesKey : @{}};
+        
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, (CFDictionaryRef)pixelBufferOptions, &_emptyPixelBuffer);
     }
     return self;
 }
-- (void) awakeFromNib {
-    [self initInternal];
-}
-- (void) initInternal {
-    // Initialization code
-    self.glLayer = (CAEAGLLayer*)self.layer;
-    
-    NSLog(@"Creating context");
-    _context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
-    
-    if(!self.context) {
-        NSLog(@"Context creation failed");
-    }
-    self.autoresizingMask = 0xFF;
-    
-    _currentRef [0] = _currentRef[1] = nil;
-    _texture[0] = _texture[1] = nil;
-    _shaderProgram = 0;
-    _renderBuffer = 0;
-    _currentBuffer = 1;
-    
-    __block VCPreviewView* bSelf = self;
-    
-    _paused = NO;
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [bSelf setupGLES];
-    });
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(notification:) name:UIApplicationDidEnterBackgroundNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(notification:) name:UIApplicationWillEnterForegroundNotification object:nil];
-}
+//- (void) awakeFromNib {
+//    DDLogInfo(@"%s %d", __PRETTY_FUNCTION__, __LINE__);
+//    [super awakeFromNib];
+//    [self initInternal];
+//}
+//- (void) initInternal {
+//    DDLogInfo(@"%s %d", __PRETTY_FUNCTION__, __LINE__);
+//     self.autoresizingMask = 0xFF;
+//    
+//}
 - (void) dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    if(_texture[0]) {
-        CFRelease(_texture[0]);
-    }
-    if(_texture[1]) {
-        CFRelease(_texture[1]);
-    }
-    if(_currentRef[0]) {
-        CVPixelBufferRelease(_currentRef[0]);
-    }
-    if(_currentRef[1]) {
-        CVPixelBufferRelease(_currentRef[1]);
-    }
-    if(_shaderProgram) {
-        glDeleteProgram(_shaderProgram);
-    }
-    if(_vbo) {
-        glDeleteBuffers(1, &_vbo);
-    }
-    if(_vao) {
-        glDeleteVertexArrays(1, &_vao);
-    }
-    if(_fbo) {
-        glDeleteFramebuffers(1, &_fbo);
-    }
-    if(_renderBuffer) {
-        glDeleteRenderbuffers(1, &_renderBuffer);
-    }
-    CVOpenGLESTextureCacheFlush(_cache,0);
-    CFRelease(_cache);
+    [self reset];
     
+    
+    if(_emptyPixelBuffer) {
+        CVPixelBufferRelease(_emptyPixelBuffer);
+    }
+//    if ( _framebuffer ) {
+//        glDeleteFramebuffers( 1, &_framebuffer );
+//        _framebuffer = 0;
+//    }
+//    if ( _colorRenderBuffer ) {
+//        glDeleteRenderbuffers( 1, &_colorRenderBuffer );
+//        _colorRenderBuffer = 0;
+//    }
+//    
     self.context = nil;
+    
     [super dealloc];
 }
 - (void) layoutSubviews
 {
     self.backgroundColor = [UIColor blackColor];
-    [self generateGLESBuffers];
+    
+//    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
+//    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_height );
+//    
+//    DDLogInfo(@"%s %d layoutSubviews _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
 }
-- (void) notification: (NSNotification*) notification {
+
+- (void) notification: (NSNotification*) notification
+{
     if([notification.name isEqualToString:UIApplicationDidEnterBackgroundNotification]) {
-        _paused = true;
+        _internalPaused = true;
     } else if([notification.name isEqualToString:UIApplicationWillEnterForegroundNotification]) {
-        _paused = false;
+        _internalPaused = false;
     }
 }
+
+- (void) startPreview
+{
+    DDLogInfo(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
+    _paused = false;
+}
+
+- (void) stopPreview
+{
+    DDLogInfo(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
+    [self drawFrame:_emptyPixelBuffer isEmptyPixelBuffer:YES];
+    _paused = true;
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        [self reset];
+    });
+}
+
+- (void) prepareForRotationPreview
+{
+    [self drawFrame:_emptyPixelBuffer isEmptyPixelBuffer:YES];
+    _internalPaused = true;
+    [self reset];
+}
+
+- (void) completionRotationPreview
+{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        _internalPaused = false;
+    });
+}
+
 #pragma mark - Public Methods
 
-- (void) drawFrame:(CVPixelBufferRef)pixelBuffer
+- (void) drawFrame:(CVPixelBufferRef)pixelBuffer isEmptyPixelBuffer:(BOOL)isEmptyPixelBuffer
 {
+    if(pixelBuffer == nil || (_paused == true && !isEmptyPixelBuffer))
+        return;
     
-    if(_paused) return;
+    static const GLfloat squareVertices[] = {
+        -1.0f, -1.0f, // bottom left
+        1.0f, -1.0f, // bottom right
+        -1.0f,  1.0f, // top left
+        1.0f,  1.0f, // top right
+    };
+    
     
     bool updateTexture = false;
     
@@ -185,145 +293,290 @@
         
     }
     int currentBuffer = _currentBuffer;
-    __block VCPreviewView* bSelf = self;
     
     dispatch_async(dispatch_get_main_queue(), ^{
         
-        EAGLContext* current = [EAGLContext currentContext];
-        [EAGLContext setCurrentContext:bSelf.context];
+        if(_paused == true && !isEmptyPixelBuffer)
+            return;
         
-        if(updateTexture) {
-            // create a new texture
-            if(bSelf->_texture[currentBuffer]) {
-                CFRelease(bSelf->_texture[currentBuffer]);
+        EAGLContext *oldContext = [EAGLContext currentContext];
+        if ( oldContext != _oglContext ) {
+            if ( ! [EAGLContext setCurrentContext:_oglContext] ) {
+                @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:@"Problem with OpenGL context" userInfo:nil];
+                
+                return;
+            }
+        }
+        if ( _frameBufferHandle == 0 ) {
+            BOOL success = [self initializeBuffers];
+            if ( ! success ) {
+                DDLogInfo(@"Problem initializing OpenGL buffers." );
+                if ( oldContext != _oglContext ) {
+                    [EAGLContext setCurrentContext:oldContext];
+                }
+                return;
             }
             
-            CVPixelBufferLockBaseAddress(bSelf->_currentRef[currentBuffer],
-                                         kCVPixelBufferLock_ReadOnly);
-            CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                         bSelf->_cache,
-                                                         bSelf->_currentRef[currentBuffer],
-                                                         NULL,
-                                                         GL_TEXTURE_2D,
-                                                         GL_RGBA,
-                                                         (GLsizei)CVPixelBufferGetWidth(bSelf->_currentRef[currentBuffer]),
-                                                         (GLsizei)CVPixelBufferGetHeight(bSelf->_currentRef[currentBuffer]),
-                                                         GL_BGRA,
-                                                         GL_UNSIGNED_BYTE,
-                                                         0,
-                                                         &bSelf->_texture[currentBuffer]);
-            
-            glBindTexture(GL_TEXTURE_2D,
-                          CVOpenGLESTextureGetName(bSelf->_texture[currentBuffer]));
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            
-            
-            CVPixelBufferUnlockBaseAddress(bSelf->_currentRef[currentBuffer],
-                                           kCVPixelBufferLock_ReadOnly);
-            
+            GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            if(status != GL_FRAMEBUFFER_COMPLETE)
+                DDLogInfo(@"%s %d Framebuffer status: %x",__PRETTY_FUNCTION__,__LINE__, (int)status);
         }
         
-        // draw
-        glBindFramebuffer(GL_FRAMEBUFFER, bSelf->_fbo);
+        if(_internalPaused == true  && !isEmptyPixelBuffer)
+        {
+            if ( oldContext != _oglContext ) {
+                [EAGLContext setCurrentContext:oldContext];
+            }
+            return;
+        }
+        
+        if(_texture[0] == 0)
+        {
+            glGenTextures(2, _texture);
+        }
+        
+        if(updateTexture)
+        {
+            if(_exTextureRef[currentBuffer])
+            {
+                CFRelease(_exTextureRef[currentBuffer]);
+            }
+            
+            CVPixelBufferLockBaseAddress(_currentRef[_currentBuffer], kCVPixelBufferLock_ReadOnly);
+            frameWidth = (int) CVPixelBufferGetWidth(_currentRef[_currentBuffer]);
+            frameHeight = (int) CVPixelBufferGetHeight(_currentRef[_currentBuffer]);
+            GLubyte *dataTemp = (GLubyte *)CVPixelBufferGetBaseAddress(_currentRef[_currentBuffer]);
+            
+            checkGlErrorLB("1");
+            
+            glBindTexture(GL_TEXTURE_2D, _texture[currentBuffer]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, frameWidth, frameHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, dataTemp);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            
+            checkGlErrorLB("2 0");
+            //_texture = CVOpenGLESTextureGetName(_exTextureRef[0]);
+            glBindTexture(GL_TEXTURE_2D,_texture[currentBuffer]);
+            
+            checkGlErrorLB("2 1");
+        
+            CVPixelBufferUnlockBaseAddress(_currentRef[_currentBuffer], kCVPixelBufferLock_ReadOnly);
+        }
+        
+        glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
+        glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_height );
+        
+        //DDLogInfo(@"%s %d GLView: initializeBuffers _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
+        
+        
+        drawWidth = _width;
+        
+        drawHeight = (drawWidth / frameWidth) * frameHeight;
+        
+        drawX = 0;
+        drawY = _height/2 - drawHeight/2;
+        
+        //DDLogInfo(@"ViewPort: X: %f Y: %f W: %f H: %f", drawX, drawY, drawWidth, drawHeight );
+        
+        glViewport( drawX, drawY, drawWidth, drawHeight);
+        
+        
+        
+        glBindFramebuffer(GL_FRAMEBUFFER, _frameBufferHandle);
         glClear(GL_COLOR_BUFFER_BIT);
-        glBindTexture(GL_TEXTURE_2D, CVOpenGLESTextureGetName(bSelf->_texture[currentBuffer]));
+        checkGlErrorLB("3");
         
-        glm::mat4 matrix(1.f);
-        float width = CVPixelBufferGetWidth(bSelf->_currentRef[currentBuffer]);
-        float height = CVPixelBufferGetHeight(bSelf->_currentRef[currentBuffer]);
+        //glViewport(0, 0, _width, _height);
+        glUseProgram( _program );
+        glActiveTexture( GL_TEXTURE0 );
+        
+        glUniform1i( _frame, 0 );
+        checkGlErrorLB("4");
         
         
-        float wfac = float(bSelf.bounds.size.width) / width;
-        float hfac = float(bSelf.bounds.size.height) / height;
+        // Set texture parameters
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
         
-        bool aspectFit = false;
+        glVertexAttribPointer( ATTRIB_VERTEX, 2, GL_FLOAT, 0, 0, squareVertices );
+        glEnableVertexAttribArray( ATTRIB_VERTEX );
         
-        const float mult = (aspectFit ? (wfac < hfac) : (wfac > hfac)) ? wfac : hfac;
+        checkGlErrorLB("5");
         
-        wfac = width*mult / float(bSelf.bounds.size.width);
-        hfac = height*mult / float(bSelf.bounds.size.height);
+        //DDLogInfo(@"Bound W:%f H:%f",self.bounds.size.width,  self.bounds.size.height);
         
-        matrix = glm::scale(matrix, glm::vec3(1.f * wfac,-1.f * hfac,1.f));
+        GLfloat passThroughTextureVerticesNoScale[] = {
+            0.0f, 1.0f,
+            1.0f,  1.0f,
+            0.0f,  0.0f,
+            1.0f, 0.0f,
+        };
         
-        glUniformMatrix4fv(bSelf->_matrixPos, 1, GL_FALSE, &matrix[0][0]);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        GL_ERRORS(__LINE__)
-        glBindRenderbuffer(GL_RENDERBUFFER, bSelf->_renderBuffer);
-        if(!bSelf->_paused.load()) {
-            [self.context presentRenderbuffer:GL_RENDERBUFFER];
+        checkGlErrorLB("7");
+        glVertexAttribPointer( ATTRIB_TEXTUREPOSITON, 2, GL_FLOAT, 0, 0, passThroughTextureVerticesNoScale );
+        glEnableVertexAttribArray( ATTRIB_TEXTUREPOSITON );
+        glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+        checkGlErrorLB("8");
+        glFinish();
+        glBindFramebuffer( GL_FRAMEBUFFER, _frameBufferHandle );
+        glBindTexture( GL_TEXTURE_2D, 0 );
+        checkGlErrorLB("6");
+        
+        [_oglContext presentRenderbuffer:GL_RENDERBUFFER];
+        
+        CVOpenGLESTextureCacheFlush(_textureCache,0);
+        
+        glBindTexture( GL_TEXTURE_2D, 0 );
+        //CFRelease( texture );
+        
+        if ( oldContext != _oglContext ) {
+            [EAGLContext setCurrentContext:oldContext];
         }
-        [EAGLContext setCurrentContext:current];
-        CVOpenGLESTextureCacheFlush(_cache,0);
+        
     });
-    
 }
 #pragma mark - Private Methods
 
-- (void) generateGLESBuffers
+- (BOOL)initializeBuffers
 {
-    EAGLContext* current = [EAGLContext currentContext];
-    [EAGLContext setCurrentContext:self.context];
+    BOOL success = YES;
     
-    if(_renderBuffer) {
-        glDeleteRenderbuffers(1, &_renderBuffer);
+    glDisable( GL_DEPTH_TEST );
+    
+    glGenFramebuffers( 1, &_frameBufferHandle );
+    glBindFramebuffer( GL_FRAMEBUFFER, _frameBufferHandle );
+    
+    glGenRenderbuffers( 1, &_colorBufferHandle );
+    glBindRenderbuffer( GL_RENDERBUFFER, _colorBufferHandle );
+    
+    [_oglContext renderbufferStorage:GL_RENDERBUFFER fromDrawable:(CAEAGLLayer *)self.layer];
+    
+    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
+    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_height );
+    
+    DDLogInfo(@"%s %d GLView: initializeBuffers _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
+    
+   
+    glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _colorBufferHandle );
+    
+    
+    if ( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
+        DDLogInfo(@"GLView: Failure with framebuffer generation" );
+        success = NO;
+        if ( ! success ) {
+            [self reset];
+        }
+        return success;
     }
-    if(_fbo) {
-        glDeleteFramebuffers(1, &_fbo);
+    
+    //  Create a new CVOpenGLESTexture cache
+    CVReturn err = CVOpenGLESTextureCacheCreate( kCFAllocatorDefault, NULL, _oglContext, NULL, &_textureCache );
+    if ( err ) {
+        DDLogInfo(@"GLView: Error at CVOpenGLESTextureCacheCreate %d", err );
+        success = NO;
+        if ( ! success ) {
+            [self reset];
+        }
+        return success;
     }
-    glGenRenderbuffers(1, &_renderBuffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, _renderBuffer);
     
-    [self.context renderbufferStorage:GL_RENDERBUFFER fromDrawable:self.glLayer];
+    // attributes
+    GLint attribLocation[NUM_ATTRIBUTES] = {
+        ATTRIB_VERTEX, ATTRIB_TEXTUREPOSITON,
+    };
+    GLchar *attribName[NUM_ATTRIBUTES] = {
+        "position", "texturecoordinate",
+    };
     
-    GL_ERRORS(__LINE__)
+    glueCreateProgram( kPassThruVertex, kPassThruFragment,
+                      NUM_ATTRIBUTES, (const GLchar **)&attribName[0], attribLocation,
+                      0, 0, 0,
+                      &_program );
     
-    glGenFramebuffers(1, &_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, _fbo);
-    int width, height;
-    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &width);
-    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _renderBuffer);
-    GL_ERRORS(__LINE__)
+    if ( ! _program ) {
+        DDLogInfo( @"GLView: Error creating the program" );
+        success = NO;
+        if ( ! success ) {
+            [self reset];
+        }
+        return success;
+    }
     
-    glClearColor(0.f, 0.f, 0.f, 1.f);
+    _frame = glueGetUniformLocation( _program, "videoframe" );
     
-    glViewport(0, 0, self.glLayer.bounds.size.width, self.glLayer.bounds.size.height);
+    if ( ! success ) {
+        [self reset];
+    }
     
-    [EAGLContext setCurrentContext:current];
-}
-- (void) setupGLES
-{
-    EAGLContext* current = [EAGLContext currentContext];
-    [EAGLContext setCurrentContext:self.context];
-    CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, self.context, NULL, &_cache);
     
-    glGenVertexArraysOES(1, &_vao);
-    glBindVertexArrayOES(_vao);
+    //for view port of output display
+    DDLogInfo( @"GLView: _width :%d &  _height %d", _width, _height );
     
-    glGenBuffers(1, &_vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, _vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(s_vbo), s_vbo, GL_STATIC_DRAW);
-    
-    _shaderProgram = build_program(s_vs_mat, s_fs);
-    glUseProgram(_shaderProgram);
-    
-    int attrpos = glGetAttribLocation(_shaderProgram, "aPos");
-    int attrtex = glGetAttribLocation(_shaderProgram, "aCoord");
-    int unitex = glGetUniformLocation(_shaderProgram, "uTex0");
-    
-    _matrixPos = glGetUniformLocation(_shaderProgram, "uMat");
-    
-    glUniform1i(unitex, 0);
-    
-    glEnableVertexAttribArray(attrpos);
-    glEnableVertexAttribArray(attrtex);
-    glVertexAttribPointer(attrpos, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 4, BUFFER_OFFSET(0));
-    glVertexAttribPointer(attrtex, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 4, BUFFER_OFFSET(8));
-    
-    [EAGLContext setCurrentContext:current];
-}
 
+    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
+    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_height );
+    
+    
+    _currentRef [0] = _currentRef[1] = nil;
+    _currentBuffer = 1;
+    
+    
+
+    
+    
+    _internalPaused = false;
+    return success;
+}
+- (void)reset
+{
+    DDLogInfo(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
+    
+    EAGLContext *oldContext = [EAGLContext currentContext];
+    if ( oldContext != _oglContext ) {
+        if ( ! [EAGLContext setCurrentContext:_oglContext] ) {
+            @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:@"Problem with OpenGL context" userInfo:nil];
+            return;
+        }
+    }
+    if ( _frameBufferHandle ) {
+        glDeleteFramebuffers( 1, &_frameBufferHandle );
+        _frameBufferHandle = 0;
+    }
+    if ( _colorBufferHandle ) {
+        glDeleteRenderbuffers( 1, &_colorBufferHandle );
+        _colorBufferHandle = 0;
+    }
+    if ( _program ) {
+        glDeleteProgram( _program );
+        _program = 0;
+    }
+    if ( _textureCache ) {
+        CFRelease( _textureCache );
+        _textureCache = 0;
+    }
+    
+//    if(_emptyPixelBuffer) {
+//        CVPixelBufferRelease(_emptyPixelBuffer);
+//    }
+    if(_exTextureRef[0]) {
+        CFRelease(_exTextureRef[0]);
+    }
+    if(_exTextureRef[1]) {
+        CFRelease(_exTextureRef[1]);
+    }
+//    if(_currentRef[0]) {
+//        CVPixelBufferRelease(_currentRef[0]);
+//    }
+//    if(_currentRef[1]) {
+//        CVPixelBufferRelease(_currentRef[1]);
+//    }
+    
+    if ( oldContext != _oglContext && !_paused) {
+        [EAGLContext setCurrentContext:oldContext];
+    }
+}
 @end

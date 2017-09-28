@@ -25,7 +25,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
 #include <iostream>
-#include <videocore/stream/Apple/StreamSession.h>
+#include <VideoCore/stream/Apple/StreamSession.h>
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -137,6 +137,7 @@ namespace videocore {
         ssize_t
         StreamSession::write(uint8_t *buffer, size_t size)
         {
+            //DLog("VCSimpleSession::StreamSession::>>>>write size : %zu", size);
             NSInteger ret = 0;
           
             if( NSOS(m_outputStream).hasSpaceAvailable ) {
@@ -147,7 +148,7 @@ namespace videocore {
                 m_status ^= kStreamStatusWriteBufferHasSpace;
             }
             else if (ret < 0) {
-                NSLog(@"ERROR! [%ld] buffer: %p [ 0x%02x ], size: %zu", (long)NSOS(m_outputStream).streamError.code, buffer, buffer[0], size);
+                DLog("VCSimpleSession::StreamSession::ERROR! [%ld] buffer: %p [ 0x%02x ], size: %zu", (long)NSOS(m_outputStream).streamError.code, buffer, buffer[0], size);
             }
 
             return ret;
@@ -156,6 +157,7 @@ namespace videocore {
         ssize_t
         StreamSession::read(uint8_t *buffer, size_t size)
         {
+            //DLog("VCSimpleSession::StreamSession::<<<<read size : %zu", size);
             NSInteger ret = 0;
             
             ret = [NSIS(m_inputStream) read:buffer maxLength:size];
@@ -164,7 +166,7 @@ namespace videocore {
                 m_status ^= kStreamStatusReadBufferHasBytes;
             }
             else if (NSIS(m_inputStream).hasBytesAvailable != YES) {
-                NSLog(@"No more data in stream, clear read status");
+                DLog("VCSimpleSession::StreamSession::No more data in stream, clear read status");
                 m_status ^= kStreamStatusReadBufferHasBytes;
             }
             return ret;
@@ -205,12 +207,15 @@ namespace videocore {
             }
             if(event & NSStreamEventErrorOccurred) {
                 setStatus(kStreamStatusErrorEncountered, true);
+                DLog("VCSimpleSession::StreamSession::stream error");
+                /*
                 if (NSIS(m_inputStream).streamError) {
                     NSLog(@"Input stream error:%@", NSIS(m_inputStream).streamError);
                 }
                 if (NSOS(m_outputStream).streamError) {
                     NSLog(@"Output stream error:%@", NSIS(m_outputStream).streamError);
                 }
+                */
             }
         }
         
