@@ -25,7 +25,6 @@
 
 #import <VideoCore/api/iOS/VCSimpleSession.h>
 //#import <VideoCore/api/iOS/VCPreviewView.h>
-#import <VideoCore/system/DDLog.h>
 #import <Accelerate/Accelerate.h>
 
 #include <VideoCore/rtmp/RTMPSession.h>
@@ -184,7 +183,7 @@ static const int kMinVideoBitrate = 32000;
             CVPixelBufferRef pixelBuffer = m_videoMixer->getPixelBuffer();
             _capturedImage = [self getUIImageFromCVPixelBuffer:pixelBuffer];
             if(_capturedImage == nil) {
-                DDLogInfo(@"Video capture failed.");
+                NSLog(@"Video capture failed.");
             }
         } else {
             _capturedImage = nil;
@@ -384,7 +383,7 @@ static const int kMinVideoBitrate = 32000;
            _isStartedRtmpSession == YES &&
            [self isEndState] == NO) {
            
-            DDLogInfo(@"resumeRtmpSessionInternal");
+            NSLog(@"resumeRtmpSessionInternal");
             
             _isResumedRtmpSessionInternal = YES;
             
@@ -401,7 +400,7 @@ static const int kMinVideoBitrate = 32000;
 
 - (void) startPreview
 {
-    DDLogInfo(@"startPreview");
+    NSLog(@"startPreview");
     _blockVideoSource = NO;
     
     //[_previewView startPreview];
@@ -412,7 +411,7 @@ static const int kMinVideoBitrate = 32000;
 
 - (void) stopPreview
 {
-    DDLogInfo(@"stopPreview");
+    NSLog(@"stopPreview");
     [self invalidateStartSessionTimer];
     
     if(m_videoMixer)
@@ -444,7 +443,7 @@ static const int kMinVideoBitrate = 32000;
         return;
     }
     
-    DDLogInfo(@"startRtmpSessionWithURL : %@", rtmpUrl);
+    NSLog(@"startRtmpSessionWithURL : %@", rtmpUrl);
     
     _isStartedRtmpSession = YES;
     
@@ -462,7 +461,7 @@ static const int kMinVideoBitrate = 32000;
     if(_isStartedRtmpSession || rtmpUrl == nil) {
         return;
     }
-    DDLogInfo(@"resumeRtmpSession : %@", rtmpUrl);
+    NSLog(@"resumeRtmpSession : %@", rtmpUrl);
 
     _isStartedRtmpSession = YES;
     _tryToResumeFromOutside = YES;
@@ -478,7 +477,7 @@ static const int kMinVideoBitrate = 32000;
 
 - (void) endRtmpSessionAndCaptureImage
 {
-    DDLogInfo(@"endRtmpSessionAndCaptureImage");
+    NSLog(@"endRtmpSessionAndCaptureImage");
     
     _endRtmpSession = YES;
     _blockVideoSource = YES;
@@ -494,7 +493,7 @@ static const int kMinVideoBitrate = 32000;
 - (void) startSessionInternalTimedOut
 {
     if(self.rtmpSessionState == VCSessionStateNone || self.rtmpSessionState == VCSessionStateStarting) {
-        DDLogInfo(@">>>>> startSessionInternal timed out");
+        NSLog(@">>>>> startSessionInternal timed out");
         [self stopRtmpSession:VCSessionStateDisconnected];
     }
 }
@@ -502,7 +501,7 @@ static const int kMinVideoBitrate = 32000;
 - (void) invalidateStartSessionTimer
 {
     if(_startSessionTimer != nil) {
-        DDLogInfo(@">>>>> invalidateStartSessionTimer");
+        NSLog(@">>>>> invalidateStartSessionTimer");
         [_startSessionTimer invalidate];
         _startSessionTimer = nil;
     }
@@ -514,7 +513,7 @@ static const int kMinVideoBitrate = 32000;
         return;
     }
     
-    DDLogInfo(@"startSessionInternal : %@", rtmpUrl);
+    NSLog(@"startSessionInternal : %@", rtmpUrl);
     
     self.rtmpSessionState = VCSessionStateNone;
     
@@ -537,23 +536,23 @@ static const int kMinVideoBitrate = 32000;
                                                       [=](videocore::RTMPSession& session,
                                                           ClientState_t state) {
                                                           
-                                                          DDLogInfo(@"ClientState: %d", state);
+                                                          NSLog(@"ClientState: %d", state);
                                                           
                                                           switch(state) {
                                                                   
                                                               case kClientStateConnected:
-                                                                  DDLogInfo(@"kClientStateConnected");
+                                                                  NSLog(@"kClientStateConnected");
                                                                   if(_isResumedRtmpSessionInternal == NO || _isCalledkClientStateSessionStarted == NO) {
                                                                       _blockVideoSource = NO;
                                                                       if(_tryToResumeFromOutside == NO) {
-                                                                          DDLogInfo(@"VCSessionStateStarting");
+                                                                          NSLog(@"VCSessionStateStarting");
                                                                           self.rtmpSessionState = VCSessionStateStarting;
                                                                       }
                                                                   }
                                                                   break;
                                                               case kClientStateSessionStarted:
                                                               {
-                                                                  DDLogInfo(@"kClientStateSessionStarted");
+                                                                  NSLog(@"kClientStateSessionStarted");
                                                                   [self invalidateStartSessionTimer];
                                                                   __block VCSimpleSession* bSelf = self;
                                                                   dispatch_async(_graphManagementQueue, ^{
@@ -563,20 +562,20 @@ static const int kMinVideoBitrate = 32000;
                                                                   if(_tryToResumeFromOutside) {
                                                                       _tryToResumeFromOutside = NO;
                                                                       _isCalledkClientStateSessionStarted = YES;
-                                                                      DDLogInfo(@"VCSessionStateResumed");
+                                                                      NSLog(@"VCSessionStateResumed");
                                                                       self.rtmpSessionState = VCSessionStateResumed;
                                                                   } else if(_isResumedRtmpSessionInternal == NO || _isCalledkClientStateSessionStarted == NO) {
                                                                       _isCalledkClientStateSessionStarted = YES;
-                                                                      DDLogInfo(@"VCSessionStateStarted");
+                                                                      NSLog(@"VCSessionStateStarted");
                                                                       self.rtmpSessionState = VCSessionStateStarted;
                                                                   }
                                                                   break;
                                                               case kClientStateError:
-                                                                  DDLogInfo(@"kClientStateError");
+                                                                  NSLog(@"kClientStateError");
                                                                   [self stopRtmpSession:VCSessionStateError];
                                                                   break;
                                                               case kClientStateNotConnected:
-                                                                  DDLogInfo(@"kClientStateNotConnected");
+                                                                  NSLog(@"kClientStateNotConnected");
                                                                   [self stopRtmpSession:VCSessionStateDisconnected];
                                                                   break;
                                                               default:
@@ -618,7 +617,7 @@ static const int kMinVideoBitrate = 32000;
                                                       
                                                       if(videoBr < 160000) {
                                                           if(_unstableNetworkCount < 8) {
-                                                              DDLogInfo(@"WeakSignal %d", _unstableNetworkCount);
+                                                              NSLog(@"WeakSignal %d", _unstableNetworkCount);
                                                               if((_unstableNetworkCount % 2) == 0) {
                                                                   if ([bSelf.delegate respondsToSelector:@selector(weakSignalDetected)]) {
                                                                       dispatch_async(dispatch_get_main_queue(), ^{
@@ -627,7 +626,7 @@ static const int kMinVideoBitrate = 32000;
                                                                   }
                                                               }
                                                           } else {
-                                                              DDLogInfo(@"VCSessionStateUnstableNetwork %d", _unstableNetworkCount);
+                                                              NSLog(@"VCSessionStateUnstableNetwork %d", _unstableNetworkCount);
                                                               [self stopRtmpSession:VCSessionStateUnstableNetwork];
                                                           }
                                                           _unstableNetworkCount++;
@@ -659,7 +658,7 @@ static const int kMinVideoBitrate = 32000;
                                                       else {
                                                           video->setBitrate(std::max(std::min(int((videoBr / 32000 + vector )) * 32000, bSelf->_bpsCeiling), kMinVideoBitrate) );
                                                       }
-                                                      DDLogInfo(@"(%f) VideoBR: %d (%f)", vector, video->bitrate(), predicted);
+                                                      NSLog(@"(%f) VideoBR: %d (%f)", vector, video->bitrate(), predicted);
                                                   } /* if(vector != 0) */
 
                                               } /* if(video && audio && m_adaptiveBREnabled) */
@@ -720,19 +719,19 @@ static const int kMinVideoBitrate = 32000;
     
     switch(state){
         case VCSessionStateEnded:
-            DDLogInfo(@"changeVCSessionStateToEnded 1");
+            NSLog(@"changeVCSessionStateToEnded 1");
             break;
         case VCSessionStateError:
-            DDLogInfo(@"changeVCSessionStateToError 1");
+            NSLog(@"changeVCSessionStateToError 1");
             break;
         case VCSessionStateDisconnected:
-            DDLogInfo(@"changeVCSessionStateToDisconnected 1");
+            NSLog(@"changeVCSessionStateToDisconnected 1");
             break;
         case VCSessionStateUnstableNetwork:
-            DDLogInfo(@"changeVCSessionStateToUnstableNetwork 1");
+            NSLog(@"changeVCSessionStateToUnstableNetwork 1");
             break;
         default:
-            DDLogInfo(@"Invalid state entered : %d", (int)state);
+            NSLog(@"Invalid state entered : %d", (int)state);
             return;
     }
 
@@ -751,16 +750,16 @@ static const int kMinVideoBitrate = 32000;
 
         switch(state){
             case VCSessionStateEnded:
-                DDLogInfo(@"changeVCSessionStateToEnded 2");
+                NSLog(@"changeVCSessionStateToEnded 2");
                 break;
             case VCSessionStateError:
-                DDLogInfo(@"changeVCSessionStateToError 2");
+                NSLog(@"changeVCSessionStateToError 2");
                 break;
             case VCSessionStateDisconnected:
-                DDLogInfo(@"changeVCSessionStateToDisconnected 2");
+                NSLog(@"changeVCSessionStateToDisconnected 2");
                 break;
             case VCSessionStateUnstableNetwork:
-                DDLogInfo(@"changeVCSessionStateToUnstableNetwork 2");
+                NSLog(@"changeVCSessionStateToUnstableNetwork 2");
                 break;
             default:
                 break;
@@ -774,7 +773,7 @@ static const int kMinVideoBitrate = 32000;
 
 - (void) endRtmpSessionAndInitialize
 {
-    DDLogInfo(@"endRtmpSessionAndInitialize");
+    NSLog(@"endRtmpSessionAndInitialize");
     
     [self endRtmpSession];
     _blockVideoSource = NO;
@@ -784,7 +783,7 @@ static const int kMinVideoBitrate = 32000;
 
 - (void) endRtmpSession
 {
-    DDLogInfo(@"endRtmpSession");
+    NSLog(@"endRtmpSession");
     
     [self invalidateStartSessionTimer];
     

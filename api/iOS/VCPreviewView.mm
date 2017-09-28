@@ -31,8 +31,6 @@
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
 
-#import <VideoCore/system/DDLog.h>
-
 #import <glm/glm.hpp>
 #import <glm/gtc/matrix_transform.hpp>
 
@@ -135,12 +133,12 @@ enum {
         EAGLRenderingAPI api = kEAGLRenderingAPIOpenGLES3;
         self.context = [[EAGLContext alloc] initWithAPI:api];
         if (!self.context) {
-            DDLogInfo(@"Failed to initialize OpenGLES 2.0 context");
+            NSLog(@"Failed to initialize OpenGLES 2.0 context");
             exit(1);
         }
         
         if (![EAGLContext setCurrentContext:self.context]) {
-            DDLogInfo(@"Failed to set current OpenGL context");
+            NSLog(@"Failed to set current OpenGL context");
             exit(1);
         }
         
@@ -179,12 +177,12 @@ enum {
     return self;
 }
 //- (void) awakeFromNib {
-//    DDLogInfo(@"%s %d", __PRETTY_FUNCTION__, __LINE__);
+//    NSLog(@"%s %d", __PRETTY_FUNCTION__, __LINE__);
 //    [super awakeFromNib];
 //    [self initInternal];
 //}
 //- (void) initInternal {
-//    DDLogInfo(@"%s %d", __PRETTY_FUNCTION__, __LINE__);
+//    NSLog(@"%s %d", __PRETTY_FUNCTION__, __LINE__);
 //     self.autoresizingMask = 0xFF;
 //    
 //}
@@ -217,7 +215,7 @@ enum {
 //    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
 //    glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_height );
 //    
-//    DDLogInfo(@"%s %d layoutSubviews _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
+//    NSLog(@"%s %d layoutSubviews _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
 }
 
 - (void) notification: (NSNotification*) notification
@@ -231,13 +229,13 @@ enum {
 
 - (void) startPreview
 {
-    DDLogInfo(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
+    NSLog(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
     _paused = false;
 }
 
 - (void) stopPreview
 {
-    DDLogInfo(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
+    NSLog(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
     [self drawFrame:_emptyPixelBuffer isEmptyPixelBuffer:YES];
     _paused = true;
     
@@ -310,7 +308,7 @@ enum {
         if ( _frameBufferHandle == 0 ) {
             BOOL success = [self initializeBuffers];
             if ( ! success ) {
-                DDLogInfo(@"Problem initializing OpenGL buffers." );
+                NSLog(@"Problem initializing OpenGL buffers." );
                 if ( oldContext != _oglContext ) {
                     [EAGLContext setCurrentContext:oldContext];
                 }
@@ -319,7 +317,7 @@ enum {
             
             GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             if(status != GL_FRAMEBUFFER_COMPLETE)
-                DDLogInfo(@"%s %d Framebuffer status: %x",__PRETTY_FUNCTION__,__LINE__, (int)status);
+                NSLog(@"%s %d Framebuffer status: %x",__PRETTY_FUNCTION__,__LINE__, (int)status);
         }
         
         if(_internalPaused == true  && !isEmptyPixelBuffer)
@@ -368,7 +366,7 @@ enum {
         glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
         glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_height );
         
-        //DDLogInfo(@"%s %d GLView: initializeBuffers _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
+        //NSLog(@"%s %d GLView: initializeBuffers _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
         
         
         drawWidth = _width;
@@ -378,7 +376,7 @@ enum {
         drawX = 0;
         drawY = _height/2 - drawHeight/2;
         
-        //DDLogInfo(@"ViewPort: X: %f Y: %f W: %f H: %f", drawX, drawY, drawWidth, drawHeight );
+        //NSLog(@"ViewPort: X: %f Y: %f W: %f H: %f", drawX, drawY, drawWidth, drawHeight );
         
         glViewport( drawX, drawY, drawWidth, drawHeight);
         
@@ -407,7 +405,7 @@ enum {
         
         checkGlErrorLB("5");
         
-        //DDLogInfo(@"Bound W:%f H:%f",self.bounds.size.width,  self.bounds.size.height);
+        //NSLog(@"Bound W:%f H:%f",self.bounds.size.width,  self.bounds.size.height);
         
         GLfloat passThroughTextureVerticesNoScale[] = {
             0.0f, 1.0f,
@@ -458,14 +456,14 @@ enum {
     glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
     glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_height );
     
-    DDLogInfo(@"%s %d GLView: initializeBuffers _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
+    NSLog(@"%s %d GLView: initializeBuffers _width :%d &  _height %d",__PRETTY_FUNCTION__, __LINE__, _width, _height );
     
    
     glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _colorBufferHandle );
     
     
     if ( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
-        DDLogInfo(@"GLView: Failure with framebuffer generation" );
+        NSLog(@"GLView: Failure with framebuffer generation" );
         success = NO;
         if ( ! success ) {
             [self reset];
@@ -476,7 +474,7 @@ enum {
     //  Create a new CVOpenGLESTexture cache
     CVReturn err = CVOpenGLESTextureCacheCreate( kCFAllocatorDefault, NULL, _oglContext, NULL, &_textureCache );
     if ( err ) {
-        DDLogInfo(@"GLView: Error at CVOpenGLESTextureCacheCreate %d", err );
+        NSLog(@"GLView: Error at CVOpenGLESTextureCacheCreate %d", err );
         success = NO;
         if ( ! success ) {
             [self reset];
@@ -498,7 +496,7 @@ enum {
                       &_program );
     
     if ( ! _program ) {
-        DDLogInfo( @"GLView: Error creating the program" );
+        NSLog( @"GLView: Error creating the program" );
         success = NO;
         if ( ! success ) {
             [self reset];
@@ -514,7 +512,7 @@ enum {
     
     
     //for view port of output display
-    DDLogInfo( @"GLView: _width :%d &  _height %d", _width, _height );
+    NSLog( @"GLView: _width :%d &  _height %d", _width, _height );
     
 
     glGetRenderbufferParameteriv( GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_width );
@@ -533,7 +531,7 @@ enum {
 }
 - (void)reset
 {
-    DDLogInfo(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
+    NSLog(@"%s %d ViewPort: X: %f Y: %f W: %f H: %f", __PRETTY_FUNCTION__, __LINE__, drawX, drawY, drawWidth, drawHeight );
     
     EAGLContext *oldContext = [EAGLContext currentContext];
     if ( oldContext != _oglContext ) {

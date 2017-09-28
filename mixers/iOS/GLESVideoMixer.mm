@@ -35,7 +35,6 @@
 #import <OpenGLES/ES2/glext.h>
 #import <OpenGLES/ES3/gl.h>
 #import <UIKit/UIKit.h>
-#import <VideoCore/system/DDLog.h>
 
 #include <CoreVideo/CoreVideo.h>
 
@@ -131,7 +130,7 @@ namespace videocore { namespace iOS {
         m_output.reset();
         m_exiting = true;
         m_mixThreadCond.notify_all();
-        DDLogInfo(@"GLESVideoMixer::~GLESVideoMixer()");
+        NSLog(@"GLESVideoMixer::~GLESVideoMixer()");
         
         CVPixelBufferRelease(m_pixelBuffer[0]);
         CVPixelBufferRelease(m_pixelBuffer[1]);
@@ -177,12 +176,12 @@ namespace videocore { namespace iOS {
     void
     GLESVideoMixer::releaseBuffer(std::weak_ptr<ISource> source)
     {
-        DDLogInfo(@"GLESVideoMixer::releaseBuffer");
+        NSLog(@"GLESVideoMixer::releaseBuffer");
     }
     void
     GLESVideoMixer::unregisterSource(std::shared_ptr<ISource> source)
     {
-        DDLogInfo(@"GLESVideoMixer::unregisterSource");
+        NSLog(@"GLESVideoMixer::unregisterSource");
         releaseBuffer(source);
         
         auto it = m_sources.begin();

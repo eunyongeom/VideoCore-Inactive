@@ -26,7 +26,6 @@
 #include <dlfcn.h>
 #include <VideoCore/mixers/IAudioMixer.hpp>
 #import <UIKit/UIKit.h>
-#import <VideoCore/system/DDLog.h>
 
 #define SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(v)  ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] != NSOrderedAscending)
 #define kNoMoreDataErr -2222
@@ -167,7 +166,7 @@ namespace videocore { namespace iOS {
                                                           &outPacketDescription);
             
             if (rv && rv != kNoMoreDataErr) {
-                DDLogInfo(@"Error decoding audio stream: %d", rv);
+                NSLog(@"Error decoding audio stream: %d", rv);
                 break;
             }
             
