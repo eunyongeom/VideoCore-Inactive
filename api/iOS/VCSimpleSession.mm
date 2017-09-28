@@ -986,7 +986,11 @@ static const int kMinVideoBitrate = 32000;
     {
         m_h264Packetizer = std::make_shared<videocore::rtmp::H264Packetizer>(ctsOffset);
         
-        m_aacPacketizer = std::make_shared<videocore::rtmp::AACPacketizer>(self.audioSampleRate, self.audioChannelCount, ctsOffset * 2);
+        if(self.audioSampleRate != 48000) {
+            m_aacPacketizer = std::make_shared<videocore::rtmp::AACPacketizer>(self.audioSampleRate, self.audioChannelCount, ctsOffset);
+        } else {
+            m_aacPacketizer = std::make_shared<videocore::rtmp::AACPacketizer>(self.audioSampleRate, self.audioChannelCount, ctsOffset * 2);
+        }
 
         m_h264Split->setOutput(m_h264Packetizer);
         m_aacSplit->setOutput(m_aacPacketizer);
