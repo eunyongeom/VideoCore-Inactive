@@ -1093,7 +1093,7 @@ static const int kMinVideoBitrate = 32000;
                                                                        self.videoSize.height,
                                                                        self.fps,
                                                                        self.bitrate,
-                                                                       true,
+                                                                       false,
                                                                        ctsOffset);
 
         m_videoSplit->setOutput(m_h264Encoder);
