@@ -102,14 +102,6 @@ typedef NS_ENUM(NSInteger, MP4State)
 
 - (void) pushAudioBuffer:(NSData *)frame timeStamp:(long)timeStamp;
 
-- (void) startPreview;
-
-- (void) stopPreview;
-
-- (void) prepareForRotationPreview;
-
-- (void) completionRotationPreview;
-
 /*!
  *  Note that the rect you provide should be based on your video dimensions.  The origin
  *  of the image will be the center of the image (so if you put 0,0 as its position, it will

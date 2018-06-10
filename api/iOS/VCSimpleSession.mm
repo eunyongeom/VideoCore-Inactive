@@ -360,6 +360,16 @@ static const int kMinVideoBitrate = 32000;
     self.useAdaptiveBitrate = YES;
 
     //_previewView = [[VCPreviewView alloc] init];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(notification:)
+                                                 name:UIApplicationDidBecomeActiveNotification
+                                               object:nil];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(notification:)
+                                                 name:UIApplicationWillResignActiveNotification
+                                               object:nil];
 
     _graphManagementQueue = dispatch_queue_create("com.videocore.session.graph", 0);
     
@@ -458,18 +468,29 @@ static const int kMinVideoBitrate = 32000;
     }
 }
 
-- (void) startPreview
+- (void) notification: (NSNotification*) notification
 {
-    NSLog(@"startPreview");
-    _blockVideoSource = NO;
+    if([notification.name isEqualToString:UIApplicationDidBecomeActiveNotification]) {
+        [self didBecomeActive];
+    } else if([notification.name isEqualToString:UIApplicationWillResignActiveNotification]) {
+        [self willResignActive];
+    }
+}
+
+- (void) didBecomeActive
+{
+    NSLog(@"didBecomeActive");
+    if(_mp4Save == YES) {
+        m_muxer->pauseWriting();
+    }
     
-    //[_previewView startPreview];
+    _blockVideoSource = NO;
     
     _resumeRtmpSession = YES;
     _resumeRtmpSessionCount = 150;
 }
 
-- (void) stopPreview
+- (void) willResignActive
 {
     NSLog(@"stopPreview");
     [self invalidateStartSessionTimer];
@@ -478,23 +499,13 @@ static const int kMinVideoBitrate = 32000;
         m_videoMixer->mixPaused(true);
     
     _blockVideoSource = YES;
-    //[_previewView stopPreview];
+
     _resumeRtmpSession = NO;
     _resumeRtmpSessionCount = 150;
     if(_isStartedRtmpSession && [self isEndState] == NO) {
         [self endRtmpSession];
         _isResumedRtmpSessionInternal = NO;
     }
-}
-
-- (void) prepareForRotationPreview
-{
-    //[_previewView prepareForRotationPreview];
-}
-
-- (void) completionRotationPreview
-{
-    //[_previewView completionRotationPreview];
 }
 
 - (void) startRtmpSessionWithURL:(NSString *)rtmpUrl
