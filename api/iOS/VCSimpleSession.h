@@ -32,6 +32,7 @@
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CoreVideo/CoreVideo.h>
 #import <UIKit/UIKit.h>
 
 @class VCSimpleSession;
@@ -48,6 +49,14 @@ typedef NS_ENUM(NSInteger, VCSessionState)
     VCSessionStateDisconnected
 };
 
+typedef NS_ENUM(NSInteger, MP4State)
+{
+    MP4StateNone,
+    MP4StateFinishWriting,
+    MP4StateNotEnoughMemory,
+    MP4StateReached4GB
+};
+
 @protocol VCSessionDelegate <NSObject>
 @required
 - (void) connectionStatusChanged:(VCSessionState) sessionState capturedImage:(UIImage *)capturedImage;
@@ -55,11 +64,15 @@ typedef NS_ENUM(NSInteger, VCSessionState)
 @optional
 - (void) detectedThroughput: (NSInteger) throughputInBytesPerSecond; //Depreciated, should use method below
 - (void) detectedThroughput: (NSInteger) throughputInBytesPerSecond videoRate:(NSInteger) rate;
+- (void) mp4StatusChanged:(MP4State)mp4State fileSize:(NSString *)fileSize;
+- (void) pushAutoSaveVideoBuffer:(const uint8_t* const)data size:(size_t)size timeStamp:(CFTimeInterval)timeStamp;
+- (void) pushAutoSaveAudioBuffer:(NSData *) frame timeStamp:(CFTimeInterval)timeStamp;
 @end
 
 @interface VCSimpleSession : NSObject
 
 @property (nonatomic, readonly) VCSessionState rtmpSessionState;
+@property (nonatomic, readonly) MP4State mp4State;
 //@property (nonatomic, strong, readonly) UIView* previewView;
 
 /*! Setters / Getters for session properties */
@@ -78,6 +91,8 @@ typedef NS_ENUM(NSInteger, VCSessionState)
 + (instancetype) sharedInstance;
 
 - (void) startRtmpSessionWithURL:(NSString*) rtmpUrl;
+
+- (void) startRtmpSessionWithURL:(NSString *)rtmpUrl mp4Save:(BOOL)mp4Save iso6709Notation:(NSString *)iso6709Notation;
 
 - (void) resumeRtmpSessionWithURL:(NSString*) rtmpUrl;
 

@@ -32,6 +32,8 @@
 #include <VideoCore/transforms/RTMP/H264Packetizer.h>
 #include <VideoCore/transforms/Split.h>
 
+#include <VideoCore/transforms/Apple/MP4Multiplexer.h>
+
 #include <VideoCore/mixers/Apple/AudioMixer.h>
 #include <VideoCore/transforms/Apple/H264Encode.h>
 #include <VideoCore/sources/Apple/PixelBufferSource.h>
@@ -42,11 +44,36 @@
 #include <VideoCore/transforms/iOS/AACEncode.h>
 #include <VideoCore/transforms/iOS/H264Encode.h>
 
+#define NOW (CACurrentMediaTime()*1000)
 
 #define SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(v)  ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] != NSOrderedAscending)
 
 
 #include <sstream>
+
+namespace videocore { namespace simpleApi {
+    
+    using BufferCallback = std::function<void(const uint8_t* const data,
+                                              size_t size)> ;
+    
+    class BufferOutput : public IOutput
+    {
+    public:
+        BufferOutput(BufferCallback callback)
+        : m_callback(callback) {};
+        
+        void pushBuffer(const uint8_t* const data,
+                        size_t size,
+                        IMetadata& metadata)
+        {
+            m_callback(data, size);
+        }
+        
+    private:
+        BufferCallback m_callback;
+    };
+}
+}
 
 static const int kMinVideoBitrate = 32000;
 
@@ -54,9 +81,11 @@ static const int kMinVideoBitrate = 32000;
 {
 
     //VCPreviewView* _previewView;
+    
+    std::shared_ptr<videocore::simpleApi::BufferOutput> m_autoSaveVideoOutput;
+    std::shared_ptr<videocore::simpleApi::BufferOutput> m_autoSaveAudioOutput;
 
     std::shared_ptr<videocore::iOS::MicSource>               m_micSource;
-    std::shared_ptr<videocore::iOS::CameraSource>            m_cameraSource;
     
     std::shared_ptr<videocore::Split> m_videoSplit;
 
@@ -69,6 +98,7 @@ static const int kMinVideoBitrate = 32000;
 
     std::shared_ptr<videocore::Split>       m_aacSplit;
     std::shared_ptr<videocore::Split>       m_h264Split;
+    std::shared_ptr<videocore::Apple::MP4Multiplexer> m_muxer;
 
     std::shared_ptr<videocore::IOutputSession> m_outputSession;
 
@@ -90,6 +120,7 @@ static const int kMinVideoBitrate = 32000;
     float  _micGain;
 
     VCSessionState _rtmpSessionState;
+    MP4State _mp4State;
 
     BOOL _useAdaptiveBitrate;
     
@@ -105,15 +136,19 @@ static const int kMinVideoBitrate = 32000;
     BOOL _endRtmpSession;
     BOOL _stopRtmpSession;
     
+    BOOL _mp4Save;
+    
     int _resumeRtmpSessionCount;
     int _unstableNetworkCount;
     int _saveVideoSourceCount;
     
-   	UIImage* _capturedImage;
+    UIImage* _capturedImage;
     
     std::string _rtmpUrl;
     
     NSTimer* _startSessionTimer;
+    NSString* _iso6709Notation;
+    NSString* _mp4FileSize;
 }
 @property (nonatomic, readwrite) VCSessionState rtmpSessionState;
 
@@ -198,6 +233,23 @@ static const int kMinVideoBitrate = 32000;
 - (VCSessionState) rtmpSessionState
 {
     return _rtmpSessionState;
+}
+
+- (void) setMp4State:(MP4State)mp4State
+{
+    __block VCSimpleSession* bSelf = self;
+    _mp4State = mp4State;
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (bSelf.delegate) {
+            [bSelf.delegate mp4StatusChanged:mp4State fileSize:_mp4FileSize];
+        }
+    });
+}
+
+- (MP4State) mp4State
+{
+    return _mp4State;
 }
 
 - (void) setAudioChannelCount:(int)channelCount
@@ -327,6 +379,8 @@ static const int kMinVideoBitrate = 32000;
     _endRtmpSession = NO;
     _stopRtmpSession = NO;
     
+    _mp4Save = NO;
+    
     _saveVideoSourceCount = 0;
 
     __block VCSimpleSession* bSelf = self;
@@ -335,6 +389,11 @@ static const int kMinVideoBitrate = 32000;
     
     _capturedImage = nil;
     _startSessionTimer = nil;
+    
+    m_autoSaveVideoOutput = nil;
+    m_autoSaveAudioOutput = nil;
+    
+    _mp4FileSize = nil;
 
     dispatch_async(_graphManagementQueue, ^{
         [bSelf setupGraph];
@@ -346,6 +405,7 @@ static const int kMinVideoBitrate = 32000;
     if(m_micSource) {
         if(self.audioSampleRate != 48000) {
             m_micSource->decodeAudioFrame(frame);
+            m_micSource->pushAAC(frame, timeStamp);
         } else {
             m_micSource->pushAAC(frame, timeStamp);
         }
@@ -452,6 +512,35 @@ static const int kMinVideoBitrate = 32000;
     _rtmpUrl = [[NSString stringWithFormat:@"%@", rtmpUrl] UTF8String];
 
     dispatch_async(_graphManagementQueue, ^{
+        [bSelf startSessionInternal:rtmpUrl];
+    });
+}
+
+- (void) startRtmpSessionWithURL:(NSString *)rtmpUrl mp4Save:(BOOL)mp4Save iso6709Notation:(NSString *)iso6709Notation
+{
+    if(_isStartedRtmpSession || rtmpUrl == nil) {
+        return;
+    }
+    
+    DDLogInfo(@"startRtmpSessionWithURL : %@", rtmpUrl);
+    
+    _isStartedRtmpSession = YES;
+    
+    __block VCSimpleSession* bSelf = self;
+    
+    _rtmpUrl = [[NSString stringWithFormat:@"%@", rtmpUrl] UTF8String];
+    _iso6709Notation = [NSString stringWithString:iso6709Notation];
+    
+    _mp4Save = mp4Save;
+
+    dispatch_async(_graphManagementQueue, ^{
+        videocore::Apple::MP4SessionParameters_t parms(0.) ;
+        parms.setData(self.fps, self.videoSize.width, self.videoSize.height);
+        
+        if(_mp4Save == YES) {
+            m_muxer->startWriting(parms, _iso6709Notation);
+        }
+        
         [bSelf startSessionInternal:rtmpUrl];
     });
 }
@@ -715,6 +804,10 @@ static const int kMinVideoBitrate = 32000;
             return;
     }
     
+    if(_mp4Save == YES) {
+        m_muxer->finishWriting();
+    }
+    
     _stopRtmpSession = YES;
     
     switch(state){
@@ -822,6 +915,16 @@ static const int kMinVideoBitrate = 32000;
         m_aacEncoder = nil;
     }
     
+    if(m_autoSaveVideoOutput) {
+        m_autoSaveVideoOutput.reset();
+        m_autoSaveVideoOutput = nil;
+    }
+    
+    if(m_autoSaveAudioOutput) {
+        m_autoSaveAudioOutput.reset();
+        m_autoSaveAudioOutput = nil;
+    }
+    
     if(m_outputSession) {
         m_outputSession.reset();
         m_outputSession = nil;
@@ -832,6 +935,8 @@ static const int kMinVideoBitrate = 32000;
 
 - (void) dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    
     [self endRtmpSession];
     
     if(m_videoMixer) {
@@ -842,10 +947,12 @@ static const int kMinVideoBitrate = 32000;
     
     if(m_videoSplit) {
         m_videoSplit.reset();
+        m_videoSplit = nil;
     }
     
-    if(m_cameraSource) {
-        m_cameraSource.reset();
+    if(m_muxer) {
+        m_muxer.reset();
+        m_muxer = nil;
     }
     
 //    if(_previewView) {
@@ -875,6 +982,28 @@ static const int kMinVideoBitrate = 32000;
 
         // The H.264 Encoder introduces about 2 frames of latency, so we will set the minimum audio buffer duration to 2 frames.
         //m_audioMixer->setMinimumBufferDuration(frameDuration*2);
+        
+        m_muxer = std::make_shared<videocore::Apple::MP4Multiplexer>(
+                                                                     [=](videocore::Apple::MP4SessionState_t state, NSString* fileSize)
+                                                                     {
+                                                                         switch(state) {
+                                                                             case videocore::Apple::kMP4SessionStateFinishWriting:
+                                                                                 _mp4FileSize = nil;
+                                                                                 self.mp4State = MP4StateFinishWriting;
+                                                                                 break;
+                                                                             case videocore::Apple::kMP4SessionStateNotEnoughMemory:
+                                                                                 _mp4FileSize = [NSString stringWithString:fileSize];
+                                                                                 self.mp4State = MP4StateNotEnoughMemory;
+                                                                                 break;
+                                                                             case videocore::Apple::kMP4SessionStateReached4GB:
+                                                                                 _mp4FileSize = nil;
+                                                                                 self.mp4State = MP4StateReached4GB;
+                                                                                 break;
+                                                                             default:
+                                                                                 break;
+                                                                         }
+                                                                         
+                                                                     });
     }
 
 
@@ -996,9 +1125,27 @@ static const int kMinVideoBitrate = 32000;
         m_aacSplit->setOutput(m_aacPacketizer);
 
     }
+    {
+        if(_mp4Save == YES) {
+            if(self.audioSampleRate != 48000) {
+                m_micSource->setAacOutput(m_muxer);
+            } else {
+                m_aacSplit->setOutput(m_muxer);
+            }
+            
+            m_h264Split->setOutput(m_muxer);
+        }
+    }
 
     m_h264Packetizer->setOutput(m_outputSession);
     m_aacPacketizer->setOutput(m_outputSession);
+}
+
+- (NSString *) applicationDocumentsDirectory
+{
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *basePath = ([paths count] > 0) ? [paths objectAtIndex:0] : nil;
+    return basePath;
 }
 
 -(UIImage *) getUIImageFromCVPixelBuffer:(CVPixelBufferRef) pixelBuffer
