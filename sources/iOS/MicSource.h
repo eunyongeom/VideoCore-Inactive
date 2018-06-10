@@ -58,6 +58,7 @@ namespace videocore { namespace iOS {
     public:
         /*! ISource::setOutput */
         void setOutput(std::shared_ptr<IOutput> output);
+        void setAacOutput(std::shared_ptr<IOutput> output);
         void decodeAudioFrame(NSData * frame);
         void inputCallback(uint8_t *data, size_t data_size, int inNumberFrames);
         void pushAAC(NSData * frame, long timeStamp);
@@ -75,6 +76,7 @@ namespace videocore { namespace iOS {
         int m_channelCount;
 
         std::weak_ptr<IOutput> m_output;
+        std::weak_ptr<IOutput> m_aacOutput;
         
         AudioConverterRef m_audioConverter;
         uint8_t *m_buffer;

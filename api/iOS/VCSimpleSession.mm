@@ -533,7 +533,7 @@ static const int kMinVideoBitrate = 32000;
         return;
     }
     
-    DDLogInfo(@"startRtmpSessionWithURL : %@", rtmpUrl);
+    NSLog(@"startRtmpSessionWithURL : %@", rtmpUrl);
     
     _isStartedRtmpSession = YES;
     
@@ -1117,7 +1117,7 @@ static const int kMinVideoBitrate = 32000;
         if(self.audioSampleRate != 48000) {
             m_aacEncoder->setOutput(m_aacSplit);
         } else {
-            m_micSource->setOutput(m_aacSplit);
+            m_micSource->setAacOutput(m_aacSplit);
         }
         
         m_h264Encoder->setOutput(m_h264Split);

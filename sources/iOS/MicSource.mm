@@ -127,7 +127,7 @@ namespace videocore { namespace iOS {
     {
         uint8_t *data = (uint8_t *)[frame bytes];
         
-        auto output = m_output.lock();
+        auto output = m_aacOutput.lock();
         if(output) {
             AudioBufferMetadata md ( timeStamp );
             output->pushBuffer(data, frame.length, md);
@@ -212,6 +212,11 @@ namespace videocore { namespace iOS {
             auto mixer = std::dynamic_pointer_cast<IAudioMixer>(output);
             mixer->registerSource(shared_from_this());
         }
+    }
+    
+    void
+    MicSource::setAacOutput(std::shared_ptr<IOutput> output) {
+        m_aacOutput = output;
     }
 }
 }
